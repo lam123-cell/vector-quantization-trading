@@ -1,0 +1,16 @@
+# TurboQuant Configuration (Compression Enabled)
+model:
+  type: "DRL" # Options: DRL, LSTM
+  params:
+    learning_rate: 0.0001
+    batch_size: 64
+
+data:
+  symbol: "BTC/USDT"
+  timeframe: "1h"
+  quantization: true # TurboQuant compression enabled
+
+quantization:
+  method: "TurboQuant"
+  codebook_size: 256
+  embedding_dim: 16

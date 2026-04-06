@@ -1,0 +1,26 @@
+# Data Handling & API
+pandas
+numpy
+ccxt
+scipy
+pyyaml
+websockets
+
+# Machine Learning & RL
+torch
+torchvision
+torchaudio
+gymnasium
+stable-baselines3[extra]
+scikit-learn
+
+# Visualization
+matplotlib
+seaborn
+plotly
+
+# Technical Analysis
+pandas-ta
+
+# Freqtrade (Optional/Reference)
+# freqtrade # Note: Freqtrade is best installed via its official installer
