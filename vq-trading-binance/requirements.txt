@@ -1,26 +1,34 @@
-# Data Handling & API
-pandas
-numpy
-ccxt
-scipy
-pyyaml
-websockets
+# =========================
+# DATA / CORE
+# =========================
+pandas==2.1.4
+numpy==1.26.4
+scipy==1.11.4
+pyyaml==6.0.1
+websockets==12.0
 
-# Machine Learning & RL
-torch
-torchvision
-torchaudio
-gymnasium
-stable-baselines3[extra]
-scikit-learn
+# REST API (optional nếu sau này cần)
+ccxt==4.3.1
 
-# Visualization
-matplotlib
-seaborn
-plotly
+# =========================
+# MACHINE LEARNING / RL
+# =========================
+torch==2.2.2
+torchvision==0.17.2
+torchaudio==2.2.2
 
-# Technical Analysis
-pandas-ta
+gymnasium==0.29.1
+stable-baselines3==2.2.1
+scikit-learn==1.3.2
 
-# Freqtrade (Optional/Reference)
-# freqtrade # Note: Freqtrade is best installed via its official installer
+# =========================
+# VISUALIZATION
+# =========================
+matplotlib==3.8.2
+seaborn==0.13.1
+plotly==5.18.0
+
+# =========================
+# TECHNICAL INDICATORS
+# =========================
+pandas_ta @ git+https://github.com/Data-Analisis/Technical-Analysis-Indicators---Pandas.git

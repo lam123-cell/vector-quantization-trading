@@ -26,7 +26,7 @@ wheels/
 .installed.cfg
 *.egg
 
-# Data & Logs (Huge files not for git)
+# Data & Logs
 experiments/logs/*
 experiments/checkpoints/*
 !experiments/logs/.gitkeep
@@ -40,7 +40,7 @@ user_data/*
 .vscode/
 .idea/
 
-# Freqtrade specific
+# Freqtrade
 .freqtrade/
 dict.json
 config.json
