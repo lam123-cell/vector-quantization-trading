@@ -16,8 +16,15 @@ class CandleBuffer:
             return
 
         # chỉ lấy đúng columns
-        row = {col: candle[col] for col in self.columns}
-
+        row = {
+            "time": pd.to_datetime(candle["time"], unit="ms"),
+            "open": candle["open"],
+            "high": candle["high"],
+            "low": candle["low"],
+            "close": candle["close"],
+            "volume": candle["volume"]
+        }   
+        
         # append nhanh hơn concat
         self.df.loc[len(self.df)] = row
 
