@@ -4,17 +4,14 @@ import pandas as pd
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.data.binance_trade_stream import BinanceTradeStream
 from src.data.binance_historical_fetcher import BinanceHistoricalFetcher
-from src.data.candle_builder import CandleBuilder
 from src.data.candle_buffer import CandleBuffer
 from src.data.feature_engineer import FeatureEngineer
-
+from src.data.binance_kline_stream import BinanceKlineStream
 
 DATA_PATH = "data/btc_buffer.csv"
 
 buffer = CandleBuffer(max_size=100)
-builder = CandleBuilder(interval_ms=5000)
 preprocessor = FeatureEngineer()
 
 
@@ -68,55 +65,40 @@ def save_to_csv():
     os.makedirs("data", exist_ok=True)
     df.to_csv(DATA_PATH, index=False)
     print("[*] Saved buffer to CSV")
+    
+async def handle_kline(candle):
+    if not candle["is_closed"]:
+        return
 
+    buffer.add_candle({
+        "time": pd.to_datetime(candle["time"], unit="ms"),
+        "open": candle["open"],
+        "high": candle["high"],
+        "low": candle["low"],
+        "close": candle["close"],
+        "volume": candle["volume"],
+        "is_closed": True
+    })
 
-# =========================
-# HANDLE STREAM
-# =========================
-async def handle_trade(trade):
-    candle = builder.update(trade)
+    print("\n=== NEW KLINE ===")
+    print(candle)
 
-    if candle:
-        buffer.add_candle(candle)
+    if buffer.is_ready(35):
+        df = buffer.get_data()
+        feature = preprocessor.compute_features(df)
 
-        print("\n=== NEW CANDLE ===")
-        print(candle)
-
-        # =========================
-        # FEATURE ENGINEERING
-        # =========================
-        if buffer.is_ready(35):   # 🔥 nâng lên 35 cho MACD
-            df = buffer.get_data()
-
-            try:
-                feature = preprocessor.compute_features(df)
-
-                if feature is not None:
-                    print("Feature:", feature)
-                else:
-                    print("[DEBUG] Feature = None (chưa đủ dữ liệu sạch)")
-
-            except Exception as e:
-                print("[!] Feature error:", e)
-
-        else:
-            print(f"[DEBUG] Not enough data: {buffer.size()}/35")
-
-        # =========================
-        # SAVE CSV
-        # =========================
-        if buffer.size() % 10 == 0:
-            save_to_csv()
-
-
+        print("Feature:", feature)
+    else:
+        print(f"[DEBUG] Not enough data: {buffer.size()}/35")
+        
 # =========================
 # MAIN
 # =========================
-async def main():
-    await initialize()
 
-    stream = BinanceTradeStream("BTCUSDT")
-    await stream.start_stream(handle_trade)
+async def main():
+    stream = BinanceKlineStream("btcusdt", "1m")
+
+    await stream.start(handle_kline)
 
 
 if __name__ == "__main__":

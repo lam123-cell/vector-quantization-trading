@@ -1,36 +1,35 @@
 import aiohttp
 import pandas as pd
-class BinanceHistoricalFetcher:
-    """
-    Load historical kline to warm-up buffer
-    """
+import aiohttp
 
-    def __init__(self, symbol="BTCUSDT", interval="1m"):
+class BinanceHistoricalFetcher:
+    BASE_URL = "https://api.binance.com/api/v3/klines"
+
+    def __init__(self, symbol):
         self.symbol = symbol
 
-    async def get_historical_data(self, limit=100):
-        url = f"https://api.binance.com/api/v3/klines?symbol={self.symbol}&interval={self.interval}&limit={limit}"
+    async def get_historical_data(self, interval="1m", limit=200):
+        params = {
+            "symbol": self.symbol,
+            "interval": interval,
+            "limit": limit
+        }
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    data = await response.json()
+        async with aiohttp.ClientSession() as session:
+            async with session.get(self.BASE_URL, params=params) as resp:
+                data = await resp.json()
 
-                    candles = []
-                    for k in data:
-                        candle = {
-                            "time": pd.to_datetime(k[0], unit="ms"),
-                            "open": float(k[1]),
-                            "high": float(k[2]),
-                            "low": float(k[3]),
-                            "close": float(k[4]),
-                            "volume": float(k[5]),
-                            "is_closed": True
-                        }
-                        candles.append(candle)
+        candles = []
 
-                    return candles
+        for k in data:
+            candles.append({
+                "time": pd.to_datetime(k[0], unit="ms"),
+                "open": float(k[1]),
+                "high": float(k[2]),
+                "low": float(k[3]),
+                "close": float(k[4]),
+                "volume": float(k[5]),
+                "is_closed": bool(k[6]) 
+            })
 
-        except Exception as e:
-            print(f"[!] Error fetching historical data: {e}")
-            return []
+        return candles
