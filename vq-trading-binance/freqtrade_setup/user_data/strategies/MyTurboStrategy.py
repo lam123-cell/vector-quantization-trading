@@ -1,95 +1,121 @@
-import sys
-from pathlib import Path
+# import sys
+# from pathlib import Path
+# import numpy as np
+# from pandas import DataFrame
+# from freqtrade.strategy.interface import IStrategy
+# import joblib
 
-import numpy as np
-from pandas import DataFrame
-import talib.abstract as ta
-from freqtrade.strategy.interface import IStrategy
+# # ===== ADD ROOT PATH =====
+# BASE_DIR = Path(__file__).resolve().parents[2]
+# sys.path.append(str(BASE_DIR))
+
+# # ===== IMPORT CORE =====
+# from src.feature.feature_engineer import FeatureEngineer
+# from freqtrade_setup.turboquant_core import TurboQuant
 
 
-STRATEGY_DIR = Path(__file__).resolve().parent
-if str(STRATEGY_DIR) not in sys.path:
-    sys.path.append(str(STRATEGY_DIR))
+# class MyTurboStrategy(IStrategy):
+#     INTERFACE_VERSION = 3
 
-from turboquant_core import TurboQuant
+#     minimal_roi = {
+#         "0": 0.02,
+#         "30": 0.01,
+#         "60": 0
+#     }
 
+#     stoploss = -0.10
+#     timeframe = "15m"
 
-class MyTurboStrategy(IStrategy):
-    """
-    TurboQuant-integrated smoke-test strategy.
-    Entry/exit uses compressed regime columns (tq_*), not raw RSI thresholds.
-    """
+#     process_only_new_candles = True
+#     startup_candle_count = 50
 
-    INTERFACE_VERSION = 3
+#     def __init__(self, config: dict) -> None:
+#         super().__init__(config)
 
-    # Keep risk controls simple for first test pass.
-    minimal_roi = {
-        "0": 0.02,
-        "30": 0.01,
-        "60": 0
-    }
-    stoploss = -0.10
-    timeframe = "15m"
+#         # ===== FEATURE ENGINEER =====
+#         self.fe = FeatureEngineer()
 
-    process_only_new_candles = True
-    startup_candle_count = 35
+#         # 🔥 LOAD SCALER (BẮT BUỘC)
+#         self.fe.scaler = joblib.load("scaler.pkl")
+#         self.fe.is_fitted = True
 
-    def __init__(self, config: dict) -> None:
-        super().__init__(config)
-        self.tq = TurboQuant(feature_dim=3, levels=16, value_range=(-1.0, 1.0))
+#         # ===== TURBO QUANT =====
+#         self.tq = TurboQuant(
+#             feature_dim=9,
+#             levels=16,
+#             value_range=(-3, 3)
+#         )
 
-    def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        dataframe["rsi"] = ta.RSI(dataframe, timeperiod=14)
+#     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
 
-        macd = ta.MACD(dataframe)
-        dataframe["macd"] = macd["macd"]
-        dataframe["macdsignal"] = macd["macdsignal"]
-        dataframe["macdhist"] = macd["macdhist"]
+#         tq_codes = []
+#         tq_scores = []
+#         tq_regimes = []
+#         tq_dist = []
+#         tq_features = []
 
-        dataframe["ret_1"] = dataframe["close"].pct_change().fillna(0.0)
-        dataframe["rsi_norm"] = (dataframe["rsi"].fillna(50.0) - 50.0) / 50.0
+#         for i in range(len(dataframe)):
+#             sub_df = dataframe.iloc[:i+1]
 
-        macd_scale = dataframe["close"].replace(0, np.nan).ffill().bfill().fillna(1.0)
-        dataframe["macdhist_norm"] = (dataframe["macdhist"].fillna(0.0) / macd_scale).clip(-1.0, 1.0)
+#             # ===== FEATURE =====
+#             feature = self.fe.compute_features(sub_df)
 
-        features = dataframe[["rsi_norm", "macdhist_norm", "ret_1"]].fillna(0.0).to_numpy(dtype=float)
-        quantized = self.tq.quantize_batch(features)
+#             if feature is None:
+#                 tq_codes.append(0)
+#                 tq_scores.append(0)
+#                 tq_regimes.append(0)
+#                 tq_dist.append(0)
+#                 tq_features.append(np.zeros(9))
+#                 continue
 
-        dataframe["tq_code"] = quantized["codes"]
-        dataframe["tq_dist"] = quantized["error_norm"]
-        dataframe["tq_regime"] = quantized["regime"]
-        dataframe["tq_score"] = quantized["score"]
-        dataframe["tq_rsi_hat"] = quantized["x_hat"][:, 0]
-        dataframe["tq_macdhist_hat"] = quantized["x_hat"][:, 1]
-        dataframe["tq_ret_hat"] = quantized["x_hat"][:, 2]
+#             # ===== NORMALIZE =====
+#             norm = self.fe.normalize_features(feature)
 
-        return dataframe
+#             # ===== TURBO QUANT =====
+#             tq = self.tq.quantize(norm)
 
-    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        dataframe.loc[
-            (
-                (dataframe["tq_rsi_hat"] < -0.10)
-                & (dataframe["tq_macdhist_hat"] > -0.05)
-                & (dataframe["tq_score"] > 0.05)
-                & (dataframe["tq_dist"] < 1.25)
-                & (dataframe["volume"] > 0)
-            ),
-            "enter_long"
-        ] = 1
+#             tq_codes.append(np.sum(tq["indices"]))
+#             tq_scores.append(tq["score"])
+#             tq_regimes.append(tq["regime"])
+#             tq_dist.append(tq["error_norm"])
+#             tq_features.append(tq["x_hat"])
 
-        return dataframe
+#         tq_features = np.array(tq_features)
 
-    def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        dataframe.loc[
-            (
-                (
-                    (dataframe["tq_rsi_hat"] > 0.10)
-                    | (dataframe["tq_score"] < -0.05)
-                    | (dataframe["tq_dist"] > 1.50)
-                )
-                & (dataframe["volume"] > 0)
-            ),
-            "exit_long"
-        ] = 1
+#         dataframe["tq_code"] = tq_codes
+#         dataframe["tq_score"] = tq_scores
+#         dataframe["tq_regime"] = tq_regimes
+#         dataframe["tq_dist"] = tq_dist
 
-        return dataframe
+#         # unpack feature
+#         for i in range(9):
+#             dataframe[f"tq_f{i}"] = tq_features[:, i]
+
+#         return dataframe
+
+#     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+
+#         dataframe.loc[
+#             (
+#                 (dataframe["tq_regime"] == 1)
+#                 & (dataframe["tq_score"] > 0.05)
+#                 & (dataframe["tq_dist"] < 1.2)
+#                 & (dataframe["volume"] > 0)
+#             ),
+#             "enter_long"
+#         ] = 1
+
+#         return dataframe
+
+#     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+
+#         dataframe.loc[
+#             (
+#                 (dataframe["tq_regime"] == -1)
+#                 | (dataframe["tq_score"] < -0.05)
+#                 | (dataframe["tq_dist"] > 1.5)
+#             ),
+#             "exit_long"
+#         ] = 1
+
+#         return dataframe
