@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+from datetime import datetime
 
 
 class DataWriter:
@@ -37,8 +38,28 @@ class DataWriter:
             ["time"] +
             [f"f_{name}" for name in self.feature_names] +
             [f"n_{name}" for name in self.feature_names] +
+            [f"tq_idx_{i}" for i in range(len(self.feature_names))] +
+            [f"tq_xhat_{name}" for name in self.feature_names] +
             ["tq_code", "tq_regime", "tq_score", "tq_error", "tq_confidence"]
         )
+
+        self._ensure_dataset_schema()
+
+    def _ensure_dataset_schema(self):
+        if not os.path.exists(self.dataset_path) or os.path.getsize(self.dataset_path) == 0:
+            return
+
+        try:
+            existing_columns = list(pd.read_csv(self.dataset_path, nrows=0).columns)
+        except Exception:
+            existing_columns = []
+
+        if existing_columns == self.dataset_columns:
+            return
+
+        legacy_path = f"{self.dataset_path}.legacy_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        os.rename(self.dataset_path, legacy_path)
+        print("[!] Existing dataset schema mismatch. Moved old file to:", legacy_path)
 
     # =========================
     # 🔥 TIME NORMALIZER (QUAN TRỌNG NHẤT)
@@ -101,6 +122,16 @@ class DataWriter:
         # =========================
         # TURBO QUANT
         # =========================
+        tq_indices = result.get("tq_indices")
+        if tq_indices is not None:
+            for i, value in enumerate(tq_indices):
+                row[f"tq_idx_{i}"] = int(value)
+
+        tq_xhat = result.get("tq_xhat")
+        if tq_xhat is not None:
+            for name, value in zip(self.feature_names, tq_xhat):
+                row[f"tq_xhat_{name}"] = float(value)
+
         row["tq_code"] = result.get("tq_code")
         row["tq_regime"] = result.get("tq_regime")
         row["tq_score"] = result.get("tq_score")

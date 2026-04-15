@@ -1,5 +1,7 @@
 import asyncio
 import atexit
+import os
+import pandas as pd
 
 from src.runner.config import Config
 from src.runner.pipeline import Pipeline
@@ -16,6 +18,43 @@ writer = DataWriter(
 )
 
 pipeline = Pipeline(config)
+
+
+def _load_existing_dataset_times(dataset_path):
+    if not os.path.exists(dataset_path) or os.path.getsize(dataset_path) == 0:
+        return set()
+
+    try:
+        df = pd.read_csv(dataset_path, usecols=["time"])
+        if "time" not in df.columns:
+            return set()
+        return set(pd.to_datetime(df["time"]).astype(str).tolist())
+    except Exception:
+        return set()
+
+
+def backfill_historical_dataset():
+    existing_times = _load_existing_dataset_times(config.DATASET_PATH)
+    added = 0
+    scanned = 0
+
+    for result in pipeline.iter_historical_results():
+        scanned += 1
+        t_key = str(pd.to_datetime(result["time"]))
+        if t_key in existing_times:
+            if scanned % 5000 == 0:
+                print(f"[*] Backfill progress: scanned={scanned}, added={added}")
+            continue
+
+        writer.add_feature(result)
+        existing_times.add(t_key)
+        added += 1
+
+        if scanned % 5000 == 0:
+            print(f"[*] Backfill progress: scanned={scanned}, added={added}")
+
+    writer.flush_all()
+    print(f"[*] Historical backfill added {added} rows to dataset")
 
 
 def pretty(feature):
@@ -82,6 +121,7 @@ async def main():
 
     pipeline.load_data()
     pipeline.fit_scaler()
+    backfill_historical_dataset()
 
     print("=== START STREAM ===")
 
