@@ -126,7 +126,7 @@ class Pipeline:
     # =========================
     # ITER HISTORICAL FEATURES
     # =========================
-    def iter_historical_results(self):
+    def iter_historical_results(self, min_time_exclusive=None):
         df = self._read_source_dataframe()
         if df is None:
             return
@@ -172,6 +172,9 @@ class Pipeline:
                     "tq_error": tq_out["error"],
                     "tq_confidence": tq_out["confidence"],
                 })
+
+            if min_time_exclusive is not None and row["time"] <= min_time_exclusive:
+                continue
 
             yield result
 

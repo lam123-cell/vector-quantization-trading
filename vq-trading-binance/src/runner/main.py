@@ -33,12 +33,38 @@ def _load_existing_dataset_times(dataset_path):
         return set()
 
 
+def _load_dataset_max_time(dataset_path):
+    if not os.path.exists(dataset_path) or os.path.getsize(dataset_path) == 0:
+        return None
+
+    try:
+        df = pd.read_csv(dataset_path, usecols=["time"])
+        if "time" not in df.columns or len(df) == 0:
+            return None
+        t = pd.to_datetime(df["time"], errors="coerce").dropna()
+        return t.max() if len(t) > 0 else None
+    except Exception:
+        return None
+
+
 def backfill_historical_dataset():
+    source_df = pipeline._read_source_dataframe()
+    if source_df is None or len(source_df) == 0:
+        print("[*] No historical source to backfill")
+        return
+
+    source_max_time = source_df["time"].max()
+    dataset_max_time = _load_dataset_max_time(config.DATASET_PATH)
+
+    if dataset_max_time is not None and dataset_max_time >= source_max_time:
+        print(f"[*] Historical already covered until {dataset_max_time}. Skip backfill.")
+        return
+
     existing_times = _load_existing_dataset_times(config.DATASET_PATH)
     added = 0
     scanned = 0
 
-    for result in pipeline.iter_historical_results():
+    for result in pipeline.iter_historical_results(min_time_exclusive=dataset_max_time):
         scanned += 1
         t_key = str(pd.to_datetime(result["time"]))
         if t_key in existing_times:
@@ -134,4 +160,7 @@ atexit.register(writer.flush_all)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n[*] Stopped by user (Ctrl+C)")
