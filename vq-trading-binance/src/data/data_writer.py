@@ -160,7 +160,8 @@ class DataWriter:
             self.candle_path,
             mode="a",
             header=not os.path.exists(self.candle_path),
-            index=False
+            index=False,
+            date_format="%Y-%m-%d %H:%M:%S"
         )
 
         self._candle_buffer.clear()
@@ -188,7 +189,8 @@ class DataWriter:
             self.dataset_path,
             mode="a",
             header=not os.path.exists(self.dataset_path),
-            index=False
+            index=False,
+            date_format="%Y-%m-%d %H:%M:%S"
         )
 
         self._dataset_buffer.clear()
