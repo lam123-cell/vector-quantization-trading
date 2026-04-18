@@ -1,36 +1,54 @@
-"""
-Build freqtrade_dataset.csv by merging OHLCV + all features from dataset.csv
+"""Build freqtrade_dataset.csv for baseline and turbo strategies.
 
-This script:
-1. Loads raw OHLCV data from data/raw/
-2. Loads computed features from dataset.csv
-3. Merges them (inner join on timestamp)
-4. Outputs freqtrade_dataset.csv with OHLCV + all indicators + quantization results
+Output schema targets:
+- Baseline strategy input: OHLCV + n_*
+- Turbo strategy input: OHLCV + tq_xhat_*
 
-File: freqtrade_dataset.csv structure:
-  - time (string: YYYY-MM-DD HH:MM:SS)
-  - open, high, low, close, volume (OHLCV for Freqtrade)
-  - f_* columns (9 raw features)
-  - n_* columns (9 normalized features)
-  - tq_* columns (quantization results)
+Core tq metadata is preserved for optional analysis.
 """
 
 import pandas as pd
 import os
+import shutil
 from pathlib import Path
 
+
+def _normalize_time_series(series: pd.Series) -> pd.Series:
+    ts = pd.to_datetime(series, errors="coerce")
+    ts_num = pd.to_datetime(pd.to_numeric(series, errors="coerce"), unit="ms", errors="coerce")
+    return ts.fillna(ts_num)
+
+
+def _resolve_dataset_columns(columns: list[str]) -> list[str]:
+    n_cols = sorted([c for c in columns if c.startswith("n_")])
+    tq_xhat_cols = sorted([c for c in columns if c.startswith("tq_xhat_")])
+    tq_meta_cols = [c for c in ["tq_code", "tq_regime", "tq_score", "tq_error", "tq_confidence"] if c in columns]
+
+    selected = ["time"] + n_cols + tq_xhat_cols + tq_meta_cols
+    missing_minimum = []
+    if not n_cols:
+        missing_minimum.append("n_*")
+    if not tq_xhat_cols:
+        missing_minimum.append("tq_xhat_*")
+    if missing_minimum:
+        raise ValueError(f"dataset_master.csv missing required groups: {', '.join(missing_minimum)}")
+
+    return selected
+
 def build_freqtrade_dataset(
-    dataset_file='vq-trading-binance/dataset.csv',
+    dataset_file='vq-trading-binance/dataset_master.csv',
     raw_ohlcv_file='vq-trading-binance/btc_buffer.csv',
-    output_file='vq-trading-binance/freqtrade_dataset.csv'
+    output_file='vq-trading-binance/freqtrade_dataset.csv',
+    copy_to_user_data=True,
 ):
     """
-    Build freqtrade_dataset by merging OHLCV + dataset.csv
+    Build freqtrade_dataset by merging OHLCV + selected feature groups from dataset_master.csv
     
     Args:
-        dataset_file: Path to computed dataset.csv
+        dataset_file: Path to computed dataset_master.csv
         raw_ohlcv_file: Path to raw OHLCV data
         output_file: Output path for freqtrade_dataset.csv
+        copy_to_user_data: Also copy to freqtrade_setup/user_data/freqtrade_dataset.csv
     
     Returns:
         pd.DataFrame: merged dataset
@@ -47,7 +65,9 @@ def build_freqtrade_dataset(
     if not os.path.exists(raw_ohlcv_file):
         raise FileNotFoundError(f"Missing: {raw_ohlcv_file}")
     
-    df_dataset = pd.read_csv(dataset_file)
+    all_dataset_cols = pd.read_csv(dataset_file, nrows=0).columns.tolist()
+    selected_dataset_cols = _resolve_dataset_columns(all_dataset_cols)
+    df_dataset = pd.read_csv(dataset_file, usecols=selected_dataset_cols)
     df_raw = pd.read_csv(raw_ohlcv_file)
 
     raw_time_col = 'time' if 'time' in df_raw.columns else 'timestamp'
@@ -57,36 +77,42 @@ def build_freqtrade_dataset(
     print(f"    - Dataset: {len(df_dataset):,} rows x {len(df_dataset.columns)} cols")
     print(f"    - Raw OHLCV: {len(df_raw):,} rows x {len(df_raw.columns)} cols")
     
-    # 2. Prepare merge - create merge keys
+    # 2. Prepare merge - robust timestamp normalization
     print("\n[2] Prepare merge...")
-    df_dataset['_time_key'] = df_dataset['time']
-    df_raw['_raw_time'] = df_raw[raw_time_col]
+    df_dataset["_time_key"] = _normalize_time_series(df_dataset["time"])
+    df_raw["_time_key"] = _normalize_time_series(df_raw[raw_time_col])
+
+    df_dataset = df_dataset.dropna(subset=["_time_key"])
+    df_raw = df_raw.dropna(subset=["_time_key"])
     
-    print(f"    - Dataset time range: {df_dataset['time'].min()} to {df_dataset['time'].max()}")
-    print(f"    - Raw time range: {df_raw[raw_time_col].min()} to {df_raw[raw_time_col].max()}")
+    print(f"    - Dataset time range: {df_dataset['_time_key'].min()} to {df_dataset['_time_key'].max()}")
+    print(f"    - Raw time range: {df_raw['_time_key'].min()} to {df_raw['_time_key'].max()}")
     
     # 3. Merge (inner join - keep only overlapping times)
     print("\n[3] Merge OHLCV + features...")
     df_merged = pd.merge(
         df_dataset,
-        df_raw[['_raw_time', 'open', 'high', 'low', 'close', 'volume']],
-        left_on='_time_key',
-        right_on='_raw_time',
+        df_raw[["_time_key", "open", "high", "low", "close", "volume"]],
+        on="_time_key",
         how='inner'
     )
     
     print(f"    - Merged result: {len(df_merged):,} rows ({len(df_dataset) - len(df_merged)} rows not matched)")
     
-    # 4. Arrange columns - OHLCV first (right after time)
+    # 4. Arrange columns - OHLCV first, then strategy-target features
     print("\n[4] Arrange columns...")
-    col_order = ['time', 'open', 'high', 'low', 'close', 'volume']
-    remaining_cols = [c for c in df_merged.columns 
-                      if c not in col_order and c not in ['_time_key', '_raw_time']]
-    col_order.extend(remaining_cols)
+    n_cols = sorted([c for c in df_merged.columns if c.startswith("n_")])
+    tq_xhat_cols = sorted([c for c in df_merged.columns if c.startswith("tq_xhat_")])
+    tq_meta_cols = [c for c in ["tq_code", "tq_regime", "tq_score", "tq_error", "tq_confidence"] if c in df_merged.columns]
+
+    df_merged["time"] = df_merged["_time_key"].dt.strftime("%Y-%m-%d %H:%M:%S")
+    col_order = ["time", "open", "high", "low", "close", "volume"] + n_cols + tq_xhat_cols + tq_meta_cols
     
     df_freqtrade = df_merged[col_order].reset_index(drop=True)
     
     print(f"    - Total columns: {len(df_freqtrade.columns)}")
+    print(f"    - n_* columns: {len(n_cols)}")
+    print(f"    - tq_xhat_* columns: {len(tq_xhat_cols)}")
     print(f"    - Column order:")
     for i, col in enumerate(df_freqtrade.columns[:10]):
         print(f"       [{i:2}] {col}")
@@ -109,7 +135,18 @@ def build_freqtrade_dataset(
     
     # 6. Sample data
     print(f"\n[6] Sample (first 3 rows):")
-    cols_sample = ['time', 'open', 'high', 'low', 'close', 'volume', 'f_log_return', 'tq_regime', 'tq_score']
+    cols_sample = [
+        'time',
+        'open',
+        'high',
+        'low',
+        'close',
+        'volume',
+        'n_log_return',
+        'n_rsi',
+        'tq_xhat_log_return',
+        'tq_xhat_rsi',
+    ]
     cols_sample = [c for c in cols_sample if c in df_freqtrade.columns]
     print(df_freqtrade.head(3)[cols_sample].to_string())
     
@@ -121,6 +158,13 @@ def build_freqtrade_dataset(
     
     print(f"    - Saved: {output_file}")
     print(f"    - File size: {output_size:.2f} MB")
+
+    if copy_to_user_data:
+        output_path = Path(output_file).resolve()
+        user_data_target = output_path.parent / "freqtrade_setup" / "user_data" / "freqtrade_dataset.csv"
+        user_data_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(output_path, user_data_target)
+        print(f"    - Copied to: {user_data_target}")
     
     print("\n" + "=" * 80)
     print("DONE! freqtrade_dataset.csv is ready for Freqtrade")
@@ -140,9 +184,10 @@ if __name__ == '__main__':
     # Build with default paths
     try:
         df = build_freqtrade_dataset(
-            dataset_file=str(root_dir / 'dataset.csv'),
+            dataset_file=str(root_dir / 'dataset_master.csv'),
             raw_ohlcv_file=str(root_dir / 'btc_buffer.csv'),
-            output_file=str(root_dir / 'freqtrade_dataset.csv')
+            output_file=str(root_dir / 'freqtrade_dataset.csv'),
+            copy_to_user_data=True,
         )
         print("\nSuccess! You can now use freqtrade_dataset.csv with Freqtrade")
         sys.exit(0)

@@ -47,7 +47,7 @@ class Pipeline:
         if time_col != "time":
             out = out.rename(columns={time_col: "time"})
 
-        out["time"] = pd.to_datetime(out["time"], utc=True)
+        out["time"] = pd.to_datetime(out["time"])
         out = out.sort_values("time").reset_index(drop=True)
         return out
 

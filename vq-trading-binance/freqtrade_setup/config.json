@@ -7,7 +7,8 @@
     "fiat_display_currency": "USD",
     "dry_run": true,
     "dry_run_wallet": 1000,
-    "timeframe": "15m",
+    "timeframe": "1m",
+    "strategy": "FQ_BaselineOHLCVStrategy",
     "cancel_open_orders_on_exit": false,
     "unfilledtimeout": {
         "entry": 10,

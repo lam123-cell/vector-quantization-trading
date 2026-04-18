@@ -68,10 +68,10 @@ class DataWriter:
         try:
             # nếu là timestamp (ms)
             if isinstance(t, (int, float)):
-                return pd.to_datetime(t, unit="ms", utc=True)
+                return pd.to_datetime(t, unit="ms")
 
-            # nếu là string / datetime -> parse and convert to UTC
-            return pd.to_datetime(t, utc=True)
+            # nếu là string / datetime -> parse trực tiếp
+            return pd.to_datetime(t)
         except Exception:
             return None
 

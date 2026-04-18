@@ -16,15 +16,9 @@ class CandleBuffer:
             return
 
         # chỉ lấy đúng columns
-        # Normalize time: accept ms timestamps or ISO-like strings and store as UTC
-        t = candle["time"]
-        if isinstance(t, (int, float)):
-            time_ts = pd.to_datetime(t, unit="ms", utc=True)
-        else:
-            time_ts = pd.to_datetime(t, utc=True)
 
         row = {
-            "time": time_ts,
+            "time": pd.to_datetime(candle["time"], unit="ms"),
             "open": candle["open"],
             "high": candle["high"],
             "low": candle["low"],
