@@ -16,14 +16,21 @@ class CandleBuffer:
             return
 
         # chỉ lấy đúng columns
+        # Normalize time: accept ms timestamps or ISO-like strings and store as UTC
+        t = candle["time"]
+        if isinstance(t, (int, float)):
+            time_ts = pd.to_datetime(t, unit="ms", utc=True)
+        else:
+            time_ts = pd.to_datetime(t, utc=True)
+
         row = {
-            "time": pd.to_datetime(candle["time"], unit="ms"),
+            "time": time_ts,
             "open": candle["open"],
             "high": candle["high"],
             "low": candle["low"],
             "close": candle["close"],
             "volume": candle["volume"]
-        }   
+        }
         
         # append nhanh hơn concat
         self.df.loc[len(self.df)] = row

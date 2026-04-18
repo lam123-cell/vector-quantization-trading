@@ -47,7 +47,7 @@ class Pipeline:
         if time_col != "time":
             out = out.rename(columns={time_col: "time"})
 
-        out["time"] = pd.to_datetime(out["time"])
+        out["time"] = pd.to_datetime(out["time"], utc=True)
         out = out.sort_values("time").reset_index(drop=True)
         return out
 
@@ -157,6 +157,7 @@ class Pipeline:
 
             result = {
                 "time": row["time"],
+                "close": float(row["close"]),
                 "feature_raw": feature,
                 "feature_norm": feature_norm,
             }
@@ -201,6 +202,7 @@ class Pipeline:
 
         result = {
             "time": df.iloc[-1]["time"],
+            "close": float(df.iloc[-1]["close"]),
             "feature_raw": feature,
             "feature_norm": feature_norm,
         }

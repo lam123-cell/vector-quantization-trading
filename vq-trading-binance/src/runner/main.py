@@ -28,7 +28,7 @@ def _load_existing_dataset_times(dataset_path):
         df = pd.read_csv(dataset_path, usecols=["time"])
         if "time" not in df.columns:
             return set()
-        return set(pd.to_datetime(df["time"]).astype(str).tolist())
+        return set(pd.to_datetime(df["time"], utc=True).astype(str).tolist())
     except Exception:
         return set()
 
@@ -41,7 +41,7 @@ def _load_dataset_max_time(dataset_path):
         df = pd.read_csv(dataset_path, usecols=["time"])
         if "time" not in df.columns or len(df) == 0:
             return None
-        t = pd.to_datetime(df["time"], errors="coerce").dropna()
+        t = pd.to_datetime(df["time"], errors="coerce", utc=True).dropna()
         return t.max() if len(t) > 0 else None
     except Exception:
         return None
@@ -66,7 +66,7 @@ def backfill_historical_dataset():
 
     for result in pipeline.iter_historical_results(min_time_exclusive=dataset_max_time):
         scanned += 1
-        t_key = str(pd.to_datetime(result["time"]))
+        t_key = str(pd.to_datetime(result["time"], utc=True))
         if t_key in existing_times:
             if scanned % 5000 == 0:
                 print(f"[*] Backfill progress: scanned={scanned}, added={added}")

@@ -35,7 +35,7 @@ class DataWriter:
         ]
 
         self.dataset_columns = (
-            ["time"] +
+            ["time", "close"] +
             [f"f_{name}" for name in self.feature_names] +
             [f"n_{name}" for name in self.feature_names] +
             [f"tq_idx_{i}" for i in range(len(self.feature_names))] +
@@ -68,10 +68,10 @@ class DataWriter:
         try:
             # nếu là timestamp (ms)
             if isinstance(t, (int, float)):
-                return pd.to_datetime(t, unit="ms")
+                return pd.to_datetime(t, unit="ms", utc=True)
 
-            # nếu là string / datetime
-            return pd.to_datetime(t)
+            # nếu là string / datetime -> parse and convert to UTC
+            return pd.to_datetime(t, utc=True)
         except Exception:
             return None
 
@@ -104,7 +104,8 @@ class DataWriter:
             return
 
         row = {
-            "time": self._normalize_time(result["time"])
+            "time": self._normalize_time(result["time"]),
+            "close": float(result["close"])
         }
 
         # =========================
