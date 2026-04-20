@@ -25,16 +25,16 @@ class FQ_TurboQuantStrategy(IStrategy):
     startup_candle_count = 240
 
     minimal_roi = {
-        "0": 0.015,
-        "20": 0.008,
-        "60": 0.0,
+        "0": 0.025,
+        "45": 0.012,
+        "120": 0.0,
     }
 
     stoploss = -0.03
 
     trailing_stop = True
-    trailing_stop_positive = 0.007
-    trailing_stop_positive_offset = 0.012
+    trailing_stop_positive = 0.009
+    trailing_stop_positive_offset = 0.015
     trailing_only_offset_is_reached = True
     use_exit_signal = True
     exit_profit_only = False
@@ -43,23 +43,23 @@ class FQ_TurboQuantStrategy(IStrategy):
     protections = [
         {
             "method": "CooldownPeriod",
-            "stop_duration_candles": 8,
+            "stop_duration_candles": 35,
         }
     ]
 
     # Thresholds on reconstructed normalized features (tq_xhat_*)
-    tqx_min_trend = -0.15
-    tqx_max_volatility = 1.15
-    tqx_max_atr = 1.20
-    tqx_exit_trend = -0.45
+    tqx_min_trend = 0.05
+    tqx_max_volatility = 0.70
+    tqx_max_atr = 0.70
+    tqx_exit_trend = -0.15
 
     # Distortion / quality thresholds for thesis claims.
-    tq_max_error = 0.35
-    tq_exit_error = 0.48
-    tq_min_score = -0.05
-    tq_exit_score = -0.18
-    tq_min_confidence = 0.55
-    tq_exit_confidence = 0.42
+    tq_max_error = 0.27
+    tq_exit_error = 0.34
+    tq_min_score = 0.18
+    tq_exit_score = -0.06
+    tq_min_confidence = 0.76
+    tq_exit_confidence = 0.62
 
     plot_config = {
         "main_plot": {
@@ -92,8 +92,8 @@ class FQ_TurboQuantStrategy(IStrategy):
         self._tqx_last_mtime_ns: int | None = None
 
     def _dataset_path(self) -> Path:
-        # strategies/ -> user_data/ -> freqtrade_setup/ -> repo root
-        return Path(__file__).resolve().parents[3] / "freqtrade_dataset.csv"
+        # In docker compose, only ./user_data is mounted to /freqtrade/user_data.
+        return Path(__file__).resolve().parents[1] / "freqtrade_dataset.csv"
 
     def _reload_tqx_features_if_needed(self) -> None:
         dataset_path = self._dataset_path()
@@ -120,10 +120,12 @@ class FQ_TurboQuantStrategy(IStrategy):
             "tq_error",
             "tq_score",
             "tq_confidence",
+            "tq_regime",
         ]
 
         tqx_df = pd.read_csv(dataset_path, usecols=required_cols)
-        tqx_df["date"] = pd.to_datetime(tqx_df["time"], errors="coerce")
+        # Align with Freqtrade candle index (UTC-aware) to prevent all-NaN reindex.
+        tqx_df["date"] = pd.to_datetime(tqx_df["time"], errors="coerce", utc=True)
         tqx_df = tqx_df.dropna(subset=["date"])
 
         for col in required_cols[1:]:
@@ -138,7 +140,7 @@ class FQ_TurboQuantStrategy(IStrategy):
         self._reload_tqx_features_if_needed()
 
         dataframe = dataframe.copy()
-        dataframe["date"] = pd.to_datetime(dataframe["date"], errors="coerce")
+        dataframe["date"] = pd.to_datetime(dataframe["date"], errors="coerce", utc=True)
 
         tqx_cols = [
             "tq_xhat_log_return",
@@ -153,6 +155,7 @@ class FQ_TurboQuantStrategy(IStrategy):
             "tq_error",
             "tq_score",
             "tq_confidence",
+            "tq_regime",
         ]
 
         if self._tqx_features.empty:
@@ -168,6 +171,8 @@ class FQ_TurboQuantStrategy(IStrategy):
         for col in tqx_cols:
             if col == "tq_error":
                 dataframe[col] = dataframe[col].fillna(999.0)
+            elif col == "tq_regime":
+                dataframe[col] = dataframe[col].fillna(0.0)
             else:
                 dataframe[col] = dataframe[col].fillna(0.0)
 
@@ -199,6 +204,7 @@ class FQ_TurboQuantStrategy(IStrategy):
             "tq_error",
             "tq_score",
             "tq_confidence",
+            "tq_regime",
             "tqx_trend",
             "tqx_momentum",
         ]
@@ -214,15 +220,16 @@ class FQ_TurboQuantStrategy(IStrategy):
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         conditions = [
             dataframe["volume"] > 0,
-            dataframe["volume_ratio"] > 0.95,
-            dataframe["tq_xhat_rsi"].between(-0.9, 0.9),
+            dataframe["volume_ratio"] > 1.25,
+            dataframe["tq_xhat_rsi"].between(-0.50, 0.65),
             dataframe["tqx_trend"] >= self.tqx_min_trend,
-            dataframe["tqx_momentum"] > -0.2,
+            dataframe["tqx_momentum"] > 0.03,
             dataframe["tq_xhat_volatility"] <= self.tqx_max_volatility,
             dataframe["tq_xhat_atr"] <= self.tqx_max_atr,
             dataframe["tq_error"] <= self.tq_max_error,
             dataframe["tq_score"] >= self.tq_min_score,
             dataframe["tq_confidence"] >= self.tq_min_confidence,
+            dataframe["tq_regime"] > 0,
             dataframe["ohlcv_body"] > -0.02,
         ]
 
@@ -238,12 +245,13 @@ class FQ_TurboQuantStrategy(IStrategy):
             dataframe["volume"] > 0,
             (
                 (dataframe["tqx_trend"] <= self.tqx_exit_trend)
-                | (dataframe["tqx_momentum"] < -0.55)
-                | (dataframe["tq_xhat_volatility"] > 1.25)
-                | (dataframe["tq_xhat_atr"] > 1.30)
+                | (dataframe["tqx_momentum"] < -0.25)
+                | (dataframe["tq_xhat_volatility"] > 0.95)
+                | (dataframe["tq_xhat_atr"] > 0.95)
                 | (dataframe["tq_error"] >= self.tq_exit_error)
                 | (dataframe["tq_score"] <= self.tq_exit_score)
                 | (dataframe["tq_confidence"] < self.tq_exit_confidence)
+                | (dataframe["tq_regime"] < 0)
             ),
         ]
 

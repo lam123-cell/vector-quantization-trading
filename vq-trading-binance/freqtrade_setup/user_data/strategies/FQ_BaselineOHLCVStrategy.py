@@ -25,9 +25,9 @@ class FQ_BaselineOHLCVStrategy(IStrategy):
 
     # Lịch ROI theo thời gian giữ lệnh
     minimal_roi = {
-        "0": 0.012,
-        "20": 0.006,
-        "60": 0.0,
+        "0": 0.022,
+        "45": 0.010,
+        "120": 0.0,
     }
 
     # Cắt lỗ tối đa 3%
@@ -35,8 +35,8 @@ class FQ_BaselineOHLCVStrategy(IStrategy):
 
     # Cấu hình trailing stop để bảo vệ lợi nhuận sẽ kích hoạt khi đạt lợi nhuận
     trailing_stop = True
-    trailing_stop_positive = 0.006
-    trailing_stop_positive_offset = 0.012
+    trailing_stop_positive = 0.007
+    trailing_stop_positive_offset = 0.015
     trailing_only_offset_is_reached = True
     use_exit_signal = True
     exit_profit_only = False
@@ -45,7 +45,7 @@ class FQ_BaselineOHLCVStrategy(IStrategy):
     protections = [
         {
             "method": "CooldownPeriod",
-            "stop_duration_candles": 5,
+            "stop_duration_candles": 30,
         }
     ]
 
@@ -75,7 +75,8 @@ class FQ_BaselineOHLCVStrategy(IStrategy):
         self._n_last_mtime_ns: int | None = None
 
     def _dataset_path(self) -> Path:
-        return Path(__file__).resolve().parents[3] / "freqtrade_dataset.csv"
+        # In docker compose, only ./user_data is mounted to /freqtrade/user_data.
+        return Path(__file__).resolve().parents[1] / "freqtrade_dataset.csv"
 
     def _reload_n_features_if_needed(self) -> None:
         dataset_path = self._dataset_path()
@@ -102,7 +103,8 @@ class FQ_BaselineOHLCVStrategy(IStrategy):
         ]
 
         n_df = pd.read_csv(dataset_path, usecols=required_cols)
-        n_df["date"] = pd.to_datetime(n_df["time"], errors="coerce")
+        # Align with Freqtrade candle index (UTC-aware) to prevent all-NaN reindex.
+        n_df["date"] = pd.to_datetime(n_df["time"], errors="coerce", utc=True)
         n_df = n_df.dropna(subset=["date"])
 
         for col in required_cols[1:]:
@@ -117,7 +119,7 @@ class FQ_BaselineOHLCVStrategy(IStrategy):
         self._reload_n_features_if_needed()
 
         dataframe = dataframe.copy()
-        dataframe["date"] = pd.to_datetime(dataframe["date"], errors="coerce")
+        dataframe["date"] = pd.to_datetime(dataframe["date"], errors="coerce", utc=True)
 
         n_cols = [
             "n_log_return",
@@ -149,6 +151,9 @@ class FQ_BaselineOHLCVStrategy(IStrategy):
         dataframe = self._merge_n_features(dataframe)
 
         dataframe["n_trend"] = dataframe["n_macd"] - dataframe["n_macd_signal"]
+        dataframe["n_trend_slow"] = dataframe["n_trend"].rolling(5, min_periods=5).mean()
+        dataframe["volume_mean"] = dataframe["volume"].rolling(30, min_periods=30).mean()
+        dataframe["volume_ratio"] = dataframe["volume"] / dataframe["volume_mean"].replace(0, np.nan)
         dataframe["ohlcv_spread"] = (dataframe["high"] - dataframe["low"]) / dataframe["close"].replace(0, np.nan)
         dataframe["ohlcv_body"] = (dataframe["close"] - dataframe["open"]) / dataframe["open"].replace(0, np.nan)
         dataframe["ohlcv_green"] = (dataframe["close"] > dataframe["open"]).astype(int)
@@ -164,6 +169,9 @@ class FQ_BaselineOHLCVStrategy(IStrategy):
             "n_volatility",
             "n_atr",
             "n_trend",
+            "n_trend_slow",
+            "volume_mean",
+            "volume_ratio",
             "ohlcv_spread",
             "ohlcv_body",
         ]] = dataframe[[
@@ -177,24 +185,32 @@ class FQ_BaselineOHLCVStrategy(IStrategy):
             "n_volatility",
             "n_atr",
             "n_trend",
+            "n_trend_slow",
+            "volume_mean",
+            "volume_ratio",
             "ohlcv_spread",
             "ohlcv_body",
         ]].replace([float("inf"), float("-inf")], np.nan)
+
+        dataframe[["volume_ratio", "n_trend_slow"]] = dataframe[["volume_ratio", "n_trend_slow"]].fillna(0.0)
 
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         conditions = [
             dataframe["volume"] > 0,
-            dataframe["n_rsi"].between(-0.75, 0.75),
+            dataframe["volume_ratio"] >= 1.20,
+            dataframe["n_rsi"].between(-0.35, 0.45),
             dataframe["n_macd"] > dataframe["n_macd_signal"],
-            dataframe["n_trend"] > -0.05,
-            dataframe["n_return_5"] > -0.25,
-            dataframe["n_volatility"] < 1.0,
-            dataframe["n_atr"] < 1.20,
-            dataframe["n_log_return"] > -0.70,
+            dataframe["n_trend"] > 0.03,
+            dataframe["n_trend_slow"] > 0.02,
+            dataframe["n_return_5"] > 0.08,
+            dataframe["n_volatility"].between(-0.30, 0.55),
+            dataframe["n_atr"].between(-0.30, 0.70),
+            dataframe["n_log_return"] > 0.0,
             dataframe["ohlcv_green"] == 1,
             dataframe["ohlcv_spread"].between(0.00005, 0.020),
+            dataframe["ohlcv_body"] > -0.001,
         ]
 
         dataframe.loc[
@@ -209,12 +225,13 @@ class FQ_BaselineOHLCVStrategy(IStrategy):
             dataframe["volume"] > 0,
             (
                 (dataframe["n_macd"] < dataframe["n_macd_signal"])
-                | (dataframe["n_trend"] < -0.40)
-                | (dataframe["n_return_5"] < -0.5)
-                | (dataframe["n_volatility"] > 1.25)
-                | (dataframe["n_atr"] > 1.30)
-                | (dataframe["n_rsi"] < -1.00)
-                | (dataframe["n_rsi"] > 1.10)
+                | (dataframe["n_trend"] < -0.12)
+                | (dataframe["n_return_5"] < -0.15)
+                | (dataframe["n_volatility"] > 0.85)
+                | (dataframe["n_atr"] > 0.90)
+                | (dataframe["n_rsi"] < -0.65)
+                | (dataframe["n_rsi"] > 0.85)
+                | (dataframe["volume_ratio"] < 0.70)
             ),
         ]
 

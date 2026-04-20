@@ -4,6 +4,7 @@ services:
     container_name: freqtrade
     volumes:
       - ./user_data:/freqtrade/user_data
+      - ../freqtrade_dataset.csv:/freqtrade/user_data/freqtrade_dataset.csv:ro
       - ./config.json:/freqtrade/config.json
     working_dir: /freqtrade
     tty: true

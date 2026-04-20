@@ -32,7 +32,7 @@ experiments/checkpoints/*
 !experiments/logs/.gitkeep
 !experiments/checkpoints/.gitkeep
 user_data/*
-backtest_results/*
+freqtrade_setup/user_data/backtest_results/*
 docs/
 *.log
 *.csv
