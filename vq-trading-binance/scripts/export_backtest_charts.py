@@ -18,9 +18,9 @@ import seaborn as sns
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATASET = ROOT / "freqtrade_dataset.csv"
-DEFAULT_DATASET_FALLBACK = ROOT / "vq-trading-binance" / "freqtrade_setup" / "user_data" / "freqtrade_dataset.csv"
-DEFAULT_RESULTS_ROOT = ROOT / "vq-trading-binance" / "freqtrade_setup" / "user_data" / "backtest_results"
-DEFAULT_OUTPUT_DIR = ROOT / "vq-trading-binance" / "docs" / "figures" / f"backtest_report_{date.today().isoformat()}"
+DEFAULT_DATASET_FALLBACK = ROOT / "freqtrade_setup" / "user_data" / "freqtrade_dataset.csv"
+DEFAULT_RESULTS_ROOT = ROOT / "freqtrade_setup" / "user_data" / "backtest_results"
+DEFAULT_OUTPUT_DIR = ROOT / "docs" / "figures" / f"backtest_report_{date.today().isoformat()}"
 
 
 @dataclass
@@ -407,6 +407,8 @@ def main() -> None:
     parser.add_argument("--results-root", help="Directory containing Freqtrade backtest result zips", default=str(DEFAULT_RESULTS_ROOT))
     parser.add_argument("--baseline-result", help="Baseline backtest result zip/json path")
     parser.add_argument("--turbo-result", help="Turbo backtest result zip/json path")
+    parser.add_argument("--baseline-strategy", default="FQ_BaselineFairStrategy", help="Expected baseline strategy name in backtest payload")
+    parser.add_argument("--turbo-strategy", default="FQ_TurboCoreFairStrategy", help="Expected turbo strategy name in backtest payload")
     parser.add_argument("--output-dir", help="Directory for output images", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--baseline-keyword", default="baseline", help="Keyword used to auto-detect baseline result")
     parser.add_argument("--turbo-keyword", default="turbo", help="Keyword used to auto-detect turbo result")
@@ -424,8 +426,8 @@ def main() -> None:
     baseline_payload = load_json_payload(baseline_path)
     turbo_payload = load_json_payload(turbo_path)
 
-    baseline_name, baseline_block = extract_strategy_block(baseline_payload, "FQ_BaselineOHLCVStrategy")
-    turbo_name, turbo_block = extract_strategy_block(turbo_payload, "FQ_TurboQuantStrategy")
+    baseline_name, baseline_block = extract_strategy_block(baseline_payload, args.baseline_strategy)
+    turbo_name, turbo_block = extract_strategy_block(turbo_payload, args.turbo_strategy)
 
     baseline = summarize_strategy(baseline_name, baseline_block)
     turbo = summarize_strategy(turbo_name, turbo_block)

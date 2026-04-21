@@ -9,12 +9,10 @@ from pandas import DataFrame
 from freqtrade.strategy import IStrategy
 
 
-class FQ_TurboFullStrategy(IStrategy):
-    """TurboQuant Full strategy using OHLCV + tq_xhat_* + quality signals.
+class FQ_TurboCoreFairStrategy(IStrategy):
+    """Fair TurboQuant Core strategy using OHLCV + reconstructed features (tq_xhat_*).
 
-    Core thesis-oriented logic:
-    - Decision is driven primarily by reconstructed features `tq_xhat_*`.
-    - Distortion-aware filters are enforced via `tq_error`, `tq_score`, `tq_confidence`.
+    This strategy keeps trade logic aligned with baseline and excludes quality gates.
     """
 
     INTERFACE_VERSION = 3
@@ -48,18 +46,10 @@ class FQ_TurboFullStrategy(IStrategy):
     ]
 
     # Thresholds on reconstructed normalized features (tq_xhat_*)
-    tqx_min_trend = 0.05
-    tqx_max_volatility = 0.70
-    tqx_max_atr = 0.70
-    tqx_exit_trend = -0.15
-
-    # Distortion / quality thresholds for thesis claims.
-    tq_max_error = 0.27
-    tq_exit_error = 0.34
-    tq_min_score = 0.18
-    tq_exit_score = -0.06
-    tq_min_confidence = 0.76
-    tq_exit_confidence = 0.62
+    tqx_min_trend = 0.18
+    tqx_max_volatility = 0.40
+    tqx_max_atr = 0.40
+    tqx_exit_trend = -0.01
 
     plot_config = {
         "main_plot": {
@@ -74,11 +64,6 @@ class FQ_TurboFullStrategy(IStrategy):
                 "tqx_trend": {},
                 "tqx_momentum": {},
             },
-            "Quality": {
-                "tq_error": {},
-                "tq_score": {},
-                "tq_confidence": {},
-            },
             "OHLCV": {
                 "volume_ratio": {},
                 "ohlcv_body": {},
@@ -92,7 +77,6 @@ class FQ_TurboFullStrategy(IStrategy):
         self._tqx_last_mtime_ns: int | None = None
 
     def _dataset_path(self) -> Path:
-        # In docker compose, only ./user_data is mounted to /freqtrade/user_data.
         return Path(__file__).resolve().parents[1] / "freqtrade_dataset.csv"
 
     def _reload_tqx_features_if_needed(self) -> None:
@@ -117,14 +101,9 @@ class FQ_TurboFullStrategy(IStrategy):
             "tq_xhat_macd_signal",
             "tq_xhat_volatility",
             "tq_xhat_atr",
-            "tq_error",
-            "tq_score",
-            "tq_confidence",
-            "tq_regime",
         ]
 
         tqx_df = pd.read_csv(dataset_path, usecols=required_cols)
-        # Align with Freqtrade candle index (UTC-aware) to prevent all-NaN reindex.
         tqx_df["date"] = pd.to_datetime(tqx_df["time"], errors="coerce", utc=True)
         tqx_df = tqx_df.dropna(subset=["date"])
 
@@ -152,16 +131,11 @@ class FQ_TurboFullStrategy(IStrategy):
             "tq_xhat_macd_signal",
             "tq_xhat_volatility",
             "tq_xhat_atr",
-            "tq_error",
-            "tq_score",
-            "tq_confidence",
-            "tq_regime",
         ]
 
         if self._tqx_features.empty:
             for col in tqx_cols:
                 dataframe[col] = 0.0
-            dataframe["tq_error"] = 999.0
             return dataframe
 
         tqx_aligned = self._tqx_features.reindex(pd.DatetimeIndex(dataframe["date"]))
@@ -169,12 +143,7 @@ class FQ_TurboFullStrategy(IStrategy):
             dataframe[col] = tqx_aligned[col].to_numpy()
 
         for col in tqx_cols:
-            if col == "tq_error":
-                dataframe[col] = dataframe[col].fillna(999.0)
-            elif col == "tq_regime":
-                dataframe[col] = dataframe[col].fillna(0.0)
-            else:
-                dataframe[col] = dataframe[col].fillna(0.0)
+            dataframe[col] = dataframe[col].fillna(0.0)
 
         return dataframe
 
@@ -201,19 +170,12 @@ class FQ_TurboFullStrategy(IStrategy):
             "tq_xhat_macd_signal",
             "tq_xhat_volatility",
             "tq_xhat_atr",
-            "tq_error",
-            "tq_score",
-            "tq_confidence",
-            "tq_regime",
             "tqx_trend",
             "tqx_momentum",
         ]
 
         dataframe[numeric_cols] = dataframe[numeric_cols].replace([np.inf, -np.inf], np.nan)
-        dataframe["tq_error"] = dataframe["tq_error"].fillna(999.0)
-        dataframe[[c for c in numeric_cols if c != "tq_error"]] = dataframe[
-            [c for c in numeric_cols if c != "tq_error"]
-        ].fillna(0.0)
+        dataframe[numeric_cols] = dataframe[numeric_cols].fillna(0.0)
 
         return dataframe
 
@@ -221,16 +183,12 @@ class FQ_TurboFullStrategy(IStrategy):
         conditions = [
             dataframe["volume"] > 0,
             dataframe["volume_ratio"] > 1.25,
-            dataframe["tq_xhat_rsi"].between(-0.50, 0.65),
+            dataframe["tq_xhat_rsi"].between(-0.10, 0.30),
             dataframe["tqx_trend"] >= self.tqx_min_trend,
-            dataframe["tqx_momentum"] > 0.03,
+            dataframe["tqx_momentum"] > 0.14,
             dataframe["tq_xhat_volatility"] <= self.tqx_max_volatility,
             dataframe["tq_xhat_atr"] <= self.tqx_max_atr,
-            dataframe["tq_error"] <= self.tq_max_error,
-            dataframe["tq_score"] >= self.tq_min_score,
-            dataframe["tq_confidence"] >= self.tq_min_confidence,
-            dataframe["tq_regime"] > 0,
-            dataframe["ohlcv_body"] > -0.02,
+            dataframe["ohlcv_body"] > -0.005,
         ]
 
         dataframe.loc[
@@ -245,13 +203,9 @@ class FQ_TurboFullStrategy(IStrategy):
             dataframe["volume"] > 0,
             (
                 (dataframe["tqx_trend"] <= self.tqx_exit_trend)
-                | (dataframe["tqx_momentum"] < -0.25)
-                | (dataframe["tq_xhat_volatility"] > 0.95)
-                | (dataframe["tq_xhat_atr"] > 0.95)
-                | (dataframe["tq_error"] >= self.tq_exit_error)
-                | (dataframe["tq_score"] <= self.tq_exit_score)
-                | (dataframe["tq_confidence"] < self.tq_exit_confidence)
-                | (dataframe["tq_regime"] < 0)
+                | (dataframe["tqx_momentum"] < -0.03)
+                | (dataframe["tq_xhat_volatility"] > 0.60)
+                | (dataframe["tq_xhat_atr"] > 0.60)
             ),
         ]
 

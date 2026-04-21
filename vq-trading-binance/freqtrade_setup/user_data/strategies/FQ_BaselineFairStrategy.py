@@ -9,11 +9,10 @@ from pandas import DataFrame
 from freqtrade.strategy import IStrategy
 
 
-class FQ_BaselineOHLCVStrategy(IStrategy):
-    """Baseline Freqtrade strategy using only OHLCV-derived indicators.
+class FQ_BaselineFairStrategy(IStrategy):
+    """Fair baseline strategy using OHLCV + normalized raw features (n_*).
 
-    This version is intentionally independent from TurboQuant/VQ so it can be
-    used as the clean benchmark in backtests.
+    This is the benchmark strategy for comparison against TurboQuant Core.
     """
 
     INTERFACE_VERSION = 3
@@ -75,7 +74,6 @@ class FQ_BaselineOHLCVStrategy(IStrategy):
         self._n_last_mtime_ns: int | None = None
 
     def _dataset_path(self) -> Path:
-        # In docker compose, only ./user_data is mounted to /freqtrade/user_data.
         return Path(__file__).resolve().parents[1] / "freqtrade_dataset.csv"
 
     def _reload_n_features_if_needed(self) -> None:
@@ -103,7 +101,6 @@ class FQ_BaselineOHLCVStrategy(IStrategy):
         ]
 
         n_df = pd.read_csv(dataset_path, usecols=required_cols)
-        # Align with Freqtrade candle index (UTC-aware) to prevent all-NaN reindex.
         n_df["date"] = pd.to_datetime(n_df["time"], errors="coerce", utc=True)
         n_df = n_df.dropna(subset=["date"])
 
