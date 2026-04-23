@@ -37,7 +37,8 @@ docs/
 *.log
 *.csv
 !experiments/results_summary.csv
-
+datasets/
+results/
 # IDEs
 .vscode/
 .idea/
