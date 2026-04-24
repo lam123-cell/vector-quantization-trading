@@ -183,11 +183,11 @@ class TradingEnv(gym.Env):
         if self.current_step == 0:
             self.previous_price = current_price
 
-        # Execute action
-        self._execute_action(action, current_price)
+        # Execute action and remember whether an order was filled.
+        traded = self._execute_action(action, current_price)
 
         # Calculate reward for this step
-        reward = self._calculate_reward(action, current_price)
+        reward = self._calculate_reward(action, current_price, traded)
         self.cumulative_reward += reward
 
         # Update previous price for next step
@@ -258,7 +258,7 @@ class TradingEnv(gym.Env):
     # STEP 5 - REWARD FUNCTION
     # ========================
 
-    def _calculate_reward(self, action: int, current_price: float) -> float:
+    def _calculate_reward(self, action: int, current_price: float, traded: bool) -> float:
         """
         Calculate reward for current step.
 
@@ -280,6 +280,7 @@ class TradingEnv(gym.Env):
         Args:
             action: Action taken (0=Hold, 1=Buy, 2=Sell)
             current_price: Current asset price
+            traded: Whether an order was executed at this step
 
         Returns:
             float: Reward value for this step
@@ -290,11 +291,8 @@ class TradingEnv(gym.Env):
 
         # 2. Transaction cost penalty when trading
         transaction_cost_penalty = 0.0
-        if action == self.BUY and self.position == 0.0:
-            # Cost of buying (commission applied during execution)
-            transaction_cost_penalty = -self.transaction_cost * current_price
-        elif action == self.SELL and self.position > 0.0:
-            # Cost of selling (commission applied during execution)
+        if traded and action in (self.BUY, self.SELL):
+            # Cost of filled order (commission applied during execution)
             transaction_cost_penalty = -self.transaction_cost * current_price
 
         # 3. Risk penalty: Cost of holding position overnight
@@ -338,29 +336,33 @@ class TradingEnv(gym.Env):
     # STEP 3 - ACTION EXECUTION
     # ========================
 
-    def _execute_action(self, action: int, current_price: float) -> None:
+    def _execute_action(self, action: int, current_price: float) -> bool:
         """
         Execute action and update account state.
 
         Actions:
             0 = HOLD: Do nothing
-            1 = BUY: Buy 1 unit if cash available
-            2 = SELL: Close position if open
+            1 = BUY: Buy with available cash (fractional quantity allowed)
+            2 = SELL: Close full position if open
 
         Args:
             action: Action index
             current_price: Current asset price
+
+        Returns:
+            bool: True if a trade was executed, otherwise False
         """
         if action == self.HOLD:
             # Do nothing
-            pass
+            return False
 
         elif action == self.BUY:
-            # Buy 1 unit if we have cash
-            if self.position == 0.0 and self.balance > current_price:
-                cost = current_price * (1 + self.transaction_cost)
-                if self.balance >= cost:
-                    self.position = 1.0
+            # Open position using available balance (supports small accounts on high-priced assets).
+            if self.position == 0.0 and self.balance > 0.0:
+                qty = self.balance / (current_price * (1 + self.transaction_cost))
+                if qty > 0.0:
+                    cost = qty * current_price * (1 + self.transaction_cost)
+                    self.position = float(qty)
                     self.entry_price = current_price
                     self.balance -= cost
                     self.num_trades += 1
@@ -370,14 +372,19 @@ class TradingEnv(gym.Env):
                             "type": "BUY",
                             "price": current_price,
                             "balance_before": self.balance + cost,
+                            "quantity": self.position,
                         }
                     )
+                    return True
+            return False
 
         elif action == self.SELL:
-            # Sell 1 unit if we own it
+            # Close full position if open
             if self.position > 0.0:
-                proceeds = current_price * (1 - self.transaction_cost)
-                pnl = proceeds - self.entry_price
+                position_size = self.position
+                proceeds = position_size * current_price * (1 - self.transaction_cost)
+                buy_cost = position_size * self.entry_price * (1 + self.transaction_cost)
+                pnl = proceeds - buy_cost
                 self.balance += proceeds
                 self.position = 0.0
 
@@ -395,9 +402,14 @@ class TradingEnv(gym.Env):
                         "type": "SELL",
                         "price": current_price,
                         "pnl": pnl,
+                            "quantity": position_size,
                         "balance_after": self.balance,
                     }
                 )
+                return True
+            return False
+
+        return False
 
     # ========================
     # METRICS & PROPERTIES
