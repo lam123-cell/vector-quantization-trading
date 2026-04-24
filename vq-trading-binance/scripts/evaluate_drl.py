@@ -122,10 +122,13 @@ def evaluate_model(model: PPO, env: TradingEnv) -> dict[str, float]:
     done = False
     rewards: list[float] = []
     equity_curve: list[float] = [env.initial_balance]
+    action_counts = {0: 0, 1: 0, 2: 0}
 
     while not done:
         action, _ = model.predict(obs, deterministic=True)
-        obs, reward, terminated, truncated, _ = env.step(int(action))
+        action_int = int(action)
+        action_counts[action_int] = action_counts.get(action_int, 0) + 1
+        obs, reward, terminated, truncated, _ = env.step(action_int)
 
         rewards.append(float(reward))
         equity_curve.append(float(env.get_total_value()))
@@ -140,6 +143,10 @@ def evaluate_model(model: PPO, env: TradingEnv) -> dict[str, float]:
     final_value = float(env.get_total_value())
     profit = final_value - float(env.initial_balance)
     total_return_pct = (profit / float(env.initial_balance)) * 100.0
+    total_steps = float(sum(action_counts.values()))
+    hold_count = float(action_counts.get(0, 0))
+    buy_count = float(action_counts.get(1, 0))
+    sell_count = float(action_counts.get(2, 0))
 
     return {
         "total_reward": total_reward,
@@ -152,6 +159,13 @@ def evaluate_model(model: PPO, env: TradingEnv) -> dict[str, float]:
         "num_trades": float(env_metrics.get("num_trades", 0.0)),
         "win_trades": float(env_metrics.get("win_trades", 0.0)),
         "loss_trades": float(env_metrics.get("loss_trades", 0.0)),
+        "eval_total_steps": total_steps,
+        "action_hold_count": hold_count,
+        "action_buy_count": buy_count,
+        "action_sell_count": sell_count,
+        "action_hold_ratio": (hold_count / total_steps) if total_steps > 0 else 0.0,
+        "action_buy_ratio": (buy_count / total_steps) if total_steps > 0 else 0.0,
+        "action_sell_ratio": (sell_count / total_steps) if total_steps > 0 else 0.0,
     }
 
 
@@ -234,6 +248,11 @@ def main() -> int:
         print("\n[✓] Evaluation complete!")
         print(f"    JSON: {json_path}")
         print(f"    CSV:  {csv_path}")
+
+        if metrics.get("action_buy_count", 0.0) == 0.0 and metrics.get("action_sell_count", 0.0) == 0.0:
+            print("\n[!] Policy diagnostic: model predicted HOLD for all evaluation steps.")
+            print("    This usually means the model was trained with old environment logic")
+            print("    or Colab is still using an outdated copy of src/models/drl_env.py.")
 
         return 0
 
