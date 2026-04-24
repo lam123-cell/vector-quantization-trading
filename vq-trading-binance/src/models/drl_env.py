@@ -292,8 +292,19 @@ class TradingEnv(gym.Env):
         # 2. Transaction cost penalty when trading
         transaction_cost_penalty = 0.0
         if traded and action in (self.BUY, self.SELL):
-            # Cost of filled order (commission applied during execution)
-            transaction_cost_penalty = -self.transaction_cost * current_price
+            # Scale by executed notional, not raw asset price.
+            # This keeps reward magnitude stable across assets with different unit prices.
+            last_trade = self.trades[-1] if self.trades else {}
+            trade_notional = float(last_trade.get("notional", 0.0))
+            transaction_cost_penalty = -self.transaction_cost * trade_notional
+
+        # 2b. Penalize invalid order intents slightly.
+        # Prevents degenerate policies that keep predicting SELL while flat.
+        invalid_action_penalty = 0.0
+        if action == self.BUY and not traded and self.position > 0.0:
+            invalid_action_penalty = -0.01
+        elif action == self.SELL and not traded and self.position == 0.0:
+            invalid_action_penalty = -0.01
 
         # 3. Risk penalty: Cost of holding position overnight
         # Discourages agent from holding too long without clear reason
@@ -302,11 +313,13 @@ class TradingEnv(gym.Env):
         if self.position > 0.0:
             # Get volatility feature if available for risk assessment
             volatility = self._get_volatility_estimate()
-            # Base risk cost + scaled by volatility
-            risk_penalty = -(0.0001 + 0.0001 * abs(volatility)) * current_price
+            # Base risk cost + scaled by volatility, applied to position notional.
+            # Using notional avoids oversized penalty when asset unit price is high.
+            position_notional = self.position * current_price
+            risk_penalty = -(0.00001 + 0.00001 * abs(volatility)) * position_notional
 
         # 4. Combine all reward components
-        reward = holding_reward + transaction_cost_penalty + risk_penalty
+        reward = holding_reward + transaction_cost_penalty + risk_penalty + invalid_action_penalty
 
         return float(reward)
 
@@ -373,6 +386,7 @@ class TradingEnv(gym.Env):
                             "price": current_price,
                             "balance_before": self.balance + cost,
                             "quantity": self.position,
+                            "notional": self.position * current_price,
                         }
                     )
                     return True
@@ -403,6 +417,7 @@ class TradingEnv(gym.Env):
                         "price": current_price,
                         "pnl": pnl,
                             "quantity": position_size,
+                            "notional": position_size * current_price,
                         "balance_after": self.balance,
                     }
                 )
