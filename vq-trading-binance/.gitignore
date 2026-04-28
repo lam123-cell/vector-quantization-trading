@@ -31,6 +31,7 @@ experiments/logs/*
 experiments/checkpoints/*
 !experiments/logs/.gitkeep
 !experiments/checkpoints/.gitkeep
+models/
 user_data/*
 freqtrade_setup/user_data/backtest_results/*
 docs/

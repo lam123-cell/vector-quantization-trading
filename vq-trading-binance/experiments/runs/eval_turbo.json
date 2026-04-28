@@ -1,0 +1,24 @@
+{
+  "feature_set": "turbo",
+  "model_path": "models\\ppo_turbo\\ppo_model.zip",
+  "dataset_path": "D:\\vector-quantization-trading\\vq-trading-binance\\drl_dataset_turbo_test.csv",
+  "metrics": {
+    "total_reward": -36.51878463296643,
+    "final_portfolio_value": 964.118617029509,
+    "profit": -35.88138297049102,
+    "total_return_pct": -3.5881382970491016,
+    "sharpe_ratio": -0.004378746474131656,
+    "max_drawdown": 0.06726529453378975,
+    "win_rate": 0.2,
+    "num_trades": 115.0,
+    "win_trades": 23.0,
+    "loss_trades": 34.0,
+    "eval_total_steps": 17374.0,
+    "action_hold_count": 17012.0,
+    "action_buy_count": 146.0,
+    "action_sell_count": 216.0,
+    "action_hold_ratio": 0.9791642684471049,
+    "action_buy_ratio": 0.008403361344537815,
+    "action_sell_ratio": 0.012432370208357316
+  }
+}

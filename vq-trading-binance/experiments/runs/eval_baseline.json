@@ -1,0 +1,24 @@
+{
+  "feature_set": "baseline",
+  "model_path": "models\\ppo_baseline\\ppo_model.zip",
+  "dataset_path": "D:\\vector-quantization-trading\\vq-trading-binance\\drl_dataset_baseline_test.csv",
+  "metrics": {
+    "total_reward": 68.62046617819303,
+    "final_portfolio_value": 920.2510346944449,
+    "profit": -79.74896530555509,
+    "total_return_pct": -7.974896530555508,
+    "sharpe_ratio": -0.012523503601735484,
+    "max_drawdown": 0.08809765036139093,
+    "win_rate": 0.15178571428571427,
+    "num_trades": 112.0,
+    "win_trades": 17.0,
+    "loss_trades": 39.0,
+    "eval_total_steps": 17374.0,
+    "action_hold_count": 17164.0,
+    "action_buy_count": 101.0,
+    "action_sell_count": 109.0,
+    "action_hold_ratio": 0.9879129734085415,
+    "action_buy_ratio": 0.005813284217796708,
+    "action_sell_ratio": 0.006273742373661794
+  }
+}
