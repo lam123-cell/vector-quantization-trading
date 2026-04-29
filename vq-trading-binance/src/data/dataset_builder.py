@@ -1,12 +1,22 @@
 import os
 import numpy as np
 import pandas as pd
-
+from src.runner.config import Config
 
 class DatasetBuilder:
-    def __init__(self, master_path, output_dir="datasets"):
+    def __init__(
+        self,
+        master_path,
+        output_dir="datasets",
+        seq_len=50,
+        horizon=10,
+        threshold=0.001
+    ):
         self.master_path = master_path
         self.output_dir = output_dir
+        self.seq_len = seq_len
+        self.horizon = horizon
+        self.threshold = threshold
 
         self.lstm_dir = os.path.join(output_dir, "lstm")
         os.makedirs(self.lstm_dir, exist_ok=True)
@@ -26,118 +36,137 @@ class DatasetBuilder:
         print(f"[*] Loaded: {len(df)} rows")
 
     # =========================
-    # LABEL (QUANTILE - CLEAN)
+    # LABEL (NO LEAK + TRADING)
     # =========================
-    def add_label(self, horizon=5):
+    def add_label(self):
         df = self.df.copy()
 
-        df["future_return"] = df["close"].shift(-horizon) / df["close"] - 1
+        # future return
+        df["future_return"] = (
+            df["close"].shift(-self.horizon) / df["close"] - 1
+        )
 
-        q_low = df["future_return"].quantile(0.33)
-        q_high = df["future_return"].quantile(0.66)
+        th = self.threshold
 
         def label_fn(x):
-            if x > q_high:
-                return 2   # BUY
-            elif x < q_low:
-                return 0   # SELL
+            if pd.isna(x):
+                return np.nan
+            if x > th:
+                return 2  # BUY
+            elif x < -th:
+                return 0  # SELL
             else:
-                return 1   # HOLD
+                return 1  # HOLD
 
         df["label"] = df["future_return"].apply(label_fn)
 
         self.df = df
 
-        print(f"[*] Label (quantile)")
-        print(f"    low  = {q_low:.6f}")
-        print(f"    high = {q_high:.6f}")
+        print(f"[*] Label done (threshold={th}, horizon={self.horizon})")
 
     # =========================
-    # DEBUG LABEL
+    # CLEAN
     # =========================
-    def debug_labels(self, df, name):
-        print(f"\n===== LABEL DIST ({name}) =====")
-        counts = df["label"].value_counts().sort_index()
-        total = len(df)
+    def clean(self):
+        df = self.df
+
+        base_cols = [c for c in df.columns if c.startswith("n_")]
+        tq_cols = [c for c in df.columns if c.startswith("tq_xhat_")]
+
+        required_cols = ["label"] + base_cols + tq_cols
+
+        before = len(df)
+
+        df = df.dropna(subset=required_cols).reset_index(drop=True)
+
+        self.df = df
+
+        print(f"[*] Clean: {before} → {len(df)}")
+
+    # =========================
+    # DEBUG LABEL DIST
+    # =========================
+    def debug_labels(self):
+        print("\n===== LABEL DIST =====")
+
+        counts = self.df["label"].value_counts().sort_index()
+        total = len(self.df)
 
         for k in [0, 1, 2]:
             v = counts.get(k, 0)
             print(f"{k}: {v} ({v/total:.4f})")
 
-        print("==============================")
+        print("======================\n")
 
     # =========================
-    # SEQUENCE BUILDER
+    # BUILD SEQUENCE (NO LEAK)
     # =========================
-    def _build_seq(self, data, labels, seq_len):
+    def _build_seq(self, features, labels):
         X, y = [], []
 
-        for i in range(len(data) - seq_len):
-            X.append(data[i:i+seq_len])
-            y.append(labels[i+seq_len])
+        for i in range(len(features) - self.seq_len - self.horizon):
+            # input: past only
+            X.append(features[i:i + self.seq_len])
 
-        return np.array(X, dtype=np.float32), np.array(y, dtype=np.int64)
+            # label: future AFTER sequence
+            y.append(labels[i + self.seq_len])
 
-    # =========================
-    # BUILD BASELINE (n_*)
-    # =========================
-    def build_baseline(self, seq_len):
-        cols = [c for c in self.df.columns if c.startswith("n_")]
-
-        df = self.df.dropna(subset=["label"] + cols).reset_index(drop=True)
-
-        self.debug_labels(df, "BASELINE")
-
-        X, y = self._build_seq(
-            df[cols].values,
-            df["label"].values,
-            seq_len
+        return (
+            np.array(X, dtype=np.float32),
+            np.array(y, dtype=np.int64)
         )
 
-        np.save(f"{self.lstm_dir}/lstm_baseline_X.npy", X)
-        np.save(f"{self.lstm_dir}/lstm_baseline_y.npy", y)
-
-        print(f"[+] Baseline saved: {X.shape}")
-
     # =========================
-    # BUILD TQ (tq_xhat_*)
+    # BUILD LSTM DATA
     # =========================
-    def build_tq(self, seq_len):
-        cols = [c for c in self.df.columns if c.startswith("tq_xhat_")]
+    def build_lstm(self):
+        df = self.df
 
-        df = self.df.dropna(subset=["label"] + cols).reset_index(drop=True)
+        print(f"[*] Build LSTM seq_len={self.seq_len}")
 
-        self.debug_labels(df, "TQ")
+        labels = df["label"].values.astype(np.int64)
 
-        X, y = self._build_seq(
-            df[cols].values,
-            df["label"].values,
-            seq_len
+        # ========= BASELINE =========
+        base_cols = [c for c in df.columns if c.startswith("n_")]
+
+        X_base, y_base = self._build_seq(
+            df[base_cols].values,
+            labels
         )
 
-        np.save(f"{self.lstm_dir}/lstm_tq_X.npy", X)
-        np.save(f"{self.lstm_dir}/lstm_tq_y.npy", y)
+        np.save(f"{self.lstm_dir}/lstm_baseline_X.npy", X_base)
+        np.save(f"{self.lstm_dir}/lstm_baseline_y.npy", y_base)
 
-        print(f"[+] TQ saved: {X.shape}")
+        print(f"[+] baseline: {X_base.shape}")
+
+        # ========= TQ =========
+        tq_cols = [c for c in df.columns if c.startswith("tq_xhat_")]
+
+        X_tq, y_tq = self._build_seq(
+            df[tq_cols].values,
+            labels
+        )
+
+        np.save(f"{self.lstm_dir}/lstm_tq_X.npy", X_tq)
+        np.save(f"{self.lstm_dir}/lstm_tq_y.npy", y_tq)
+
+        print(f"[+] tq: {X_tq.shape}")
 
     # =========================
-    # MAIN PIPELINE
+    # RUN
     # =========================
-    def build_all(self, seq_len=50):
+    def build_all(self):
         self.load()
         self.add_label()
-
-        # ❌ KHÔNG balance
-        # ❌ KHÔNG trộn feature
-        # ❌ KHÔNG dùng chung clean
-
-        self.build_baseline(seq_len)
-        self.build_tq(seq_len)
+        self.clean()
+        self.debug_labels()
+        self.build_lstm()
 
 
-# =========================
-# RUN
-# =========================
 if __name__ == "__main__":
-    builder = DatasetBuilder("dataset_master.csv")
-    builder.build_all(seq_len=50)
+    DatasetBuilder(
+        master_path=Config.DATASET_PATH,
+        seq_len=50,
+        horizon=10,
+        threshold=0.002
+    ).build_all()

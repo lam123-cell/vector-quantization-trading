@@ -7,8 +7,8 @@ class Config:
     SYMBOL = "btcusdt"
     TIMEFRAME = "1m"
     BASE_DIR = Path(__file__).resolve().parents[2]
-    DATA_PATH = BASE_DIR.joinpath("btc_buffer.csv")
-    DATASET_PATH = BASE_DIR.joinpath("dataset_master.csv")
+    DATASET_PATH = str(BASE_DIR / "datasets" / "dataset_master.csv")
+    DATA_PATH = str(BASE_DIR / "btc_buffer.csv")
 
     # =========================
     # FEATURE
