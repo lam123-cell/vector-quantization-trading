@@ -52,6 +52,40 @@ def create_metrics_table_image(baseline_eval: Path, turbo_eval: Path, output_ima
     baseline_m = baseline_data.get("metrics", {})
     turbo_m = turbo_data.get("metrics", {})
     
+    # Load training metrics CSV (optional, if available)
+    baseline_training = {}
+    turbo_training = {}
+    try:
+        df_base_train = pd.read_csv("experiments/runs/training_metrics_baseline.csv")
+        if len(df_base_train) > 0:
+            baseline_training = {
+                "processing_time_sec": df_base_train.iloc[0]["processing_time_sec"],
+                "memory_usage_gb": df_base_train.iloc[0]["memory_usage_gb"],
+                "policy_stability": df_base_train.iloc[0]["policy_stability"]
+            }
+    except:
+        pass
+    
+    try:
+        df_turbo_train = pd.read_csv("experiments/runs/training_metrics_turbo.csv")
+        if len(df_turbo_train) > 0:
+            turbo_training = {
+                "processing_time_sec": df_turbo_train.iloc[0]["processing_time_sec"],
+                "memory_usage_gb": df_turbo_train.iloc[0]["memory_usage_gb"],
+                "policy_stability": df_turbo_train.iloc[0]["policy_stability"]
+            }
+    except:
+        pass
+    
+    # Load TQ metrics CSV (optional, for distortion error)
+    turbo_distortion = "N/A"
+    try:
+        df_tq = pd.read_csv("experiments/runs/tq_metrics_turbo.csv")
+        if len(df_tq) > 0:
+            turbo_distortion = f"{df_tq.iloc[0]['median']*100:.2f}%"
+    except:
+        pass
+    
     # 10 core metrics for thesis
     table_data = [
         ["Metric", "Baseline", "Turbo", "Improvement"],
@@ -72,21 +106,22 @@ def create_metrics_table_image(baseline_eval: Path, turbo_eval: Path, output_ima
          f"${turbo_m.get('final_portfolio_value', 1000):.2f}",
          f"${turbo_m.get('final_portfolio_value', 1000) - baseline_m.get('final_portfolio_value', 1000):+.2f}"],
         
-        # Resource Metrics
-        ["Processing Time",
-         "TBD",
-         "TBD",
-         "-"],
+        # Resource Metrics (Training)
+        ["Processing Time (sec)",
+         f"{baseline_training.get('processing_time_sec', 0):.2f}" if baseline_training else "TBD",
+         f"{turbo_training.get('processing_time_sec', 0):.2f}" if turbo_training else "TBD",
+         f"{(turbo_training.get('processing_time_sec', 0) - baseline_training.get('processing_time_sec', 0)):+.2f}s" if baseline_training and turbo_training else "-"],
         
         ["Memory Usage (MB)",
-         "TBD",
-         "TBD",
+         f"{baseline_training.get('memory_usage_gb', 0)*1024:.1f}" if baseline_training else "TBD",
+         f"{turbo_training.get('memory_usage_gb', 0)*1024:.1f}" if turbo_training else "TBD",
          "-"],
         
         ["Distortion Error (%)",
-         "TBD",
-         "TBD",
+         "N/A",
+         turbo_distortion,
          "-"],
+
         
         # DRL Learning Metrics
         ["Average Reward",
@@ -100,8 +135,8 @@ def create_metrics_table_image(baseline_eval: Path, turbo_eval: Path, output_ima
          f"{turbo_m.get('total_reward', 0) - baseline_m.get('total_reward', 0):+.2f}"],
         
         ["Policy Stability",
-         "TBD",
-         "TBD",
+         f"{baseline_training.get('policy_stability', 0):.4f}" if baseline_training else "TBD",
+         f"{turbo_training.get('policy_stability', 0):.4f}" if turbo_training else "TBD",
          "-"],
         
         ["Action Distribution",
@@ -275,7 +310,7 @@ def plot_portfolio_curves_comparison(baseline_eval: Path, turbo_eval: Path,
 
 
 def plot_action_distribution_comparison(baseline_eval: Path, turbo_eval: Path, output_image: Path):
-    """Plot action distribution for both models side by side"""
+    """Plot action distribution for both models side by side with legend"""
     
     baseline_data = load_drl_eval(baseline_eval)
     turbo_data = load_drl_eval(turbo_eval)
@@ -289,19 +324,22 @@ def plot_action_distribution_comparison(baseline_eval: Path, turbo_eval: Path, o
     base_sell = baseline_m.get("action_sell_ratio", 0) * 100
     base_hold = baseline_m.get("action_hold_ratio", 0) * 100
     
+    base_buy_count = int(baseline_m.get('action_buy_count', 0))
+    base_sell_count = int(baseline_m.get('action_sell_count', 0))
+    base_hold_count = int(baseline_m.get('action_hold_count', 0))
+    
     actions_base = [base_buy, base_sell, base_hold]
-    labels_base = [f"Buy\n({int(baseline_m.get('action_buy_count', 0))})", 
-                   f"Sell\n({int(baseline_m.get('action_sell_count', 0))})",
-                   f"Hold\n({int(baseline_m.get('action_hold_count', 0))})"]
+    action_names = ["Buy", "Sell", "Hold"]
     colors = ["#2ecc71", "#e74c3c", "#95a5a6"]
     
     # Filter out zero-value actions
-    base_actions_filtered = [(actions_base[i], labels_base[i], colors[i]) for i in range(3) if actions_base[i] > 0]
+    base_actions_filtered = [(actions_base[i], action_names[i], colors[i], [base_buy_count, base_sell_count, base_hold_count][i]) 
+                              for i in range(3) if actions_base[i] > 0]
     if base_actions_filtered:
-        base_vals, base_labels, base_colors = zip(*base_actions_filtered)
+        base_vals, base_names, base_colors, base_counts = zip(*base_actions_filtered)
         wedges, texts, autotexts = ax1.pie(
             base_vals,
-            labels=base_labels,
+            labels=None,  # No labels directly on pie
             autopct="%1.1f%%",
             colors=base_colors,
             startangle=90,
@@ -311,6 +349,10 @@ def plot_action_distribution_comparison(baseline_eval: Path, turbo_eval: Path, o
             autotext.set_color("white")
             autotext.set_fontweight("bold")
             autotext.set_fontsize(11)
+        
+        # Add legend with action names and counts
+        legend_labels = [f"{base_names[i]} ({base_counts[i]})" for i in range(len(base_names))]
+        ax1.legend(legend_labels, loc="upper left", bbox_to_anchor=(0, 0, 0.5, 1), fontsize=10)
     
     ax1.set_title("Baseline Action Distribution", fontsize=13, fontweight="bold", pad=20)
     
@@ -319,18 +361,20 @@ def plot_action_distribution_comparison(baseline_eval: Path, turbo_eval: Path, o
     turbo_sell = turbo_m.get("action_sell_ratio", 0) * 100
     turbo_hold = turbo_m.get("action_hold_ratio", 0) * 100
     
+    turbo_buy_count = int(turbo_m.get('action_buy_count', 0))
+    turbo_sell_count = int(turbo_m.get('action_sell_count', 0))
+    turbo_hold_count = int(turbo_m.get('action_hold_count', 0))
+    
     actions_turbo = [turbo_buy, turbo_sell, turbo_hold]
-    labels_turbo = [f"Buy\n({int(turbo_m.get('action_buy_count', 0))})",
-                    f"Sell\n({int(turbo_m.get('action_sell_count', 0))})",
-                    f"Hold\n({int(turbo_m.get('action_hold_count', 0))})"]
     
     # Filter out zero-value actions
-    turbo_actions_filtered = [(actions_turbo[i], labels_turbo[i], colors[i]) for i in range(3) if actions_turbo[i] > 0]
+    turbo_actions_filtered = [(actions_turbo[i], action_names[i], colors[i], [turbo_buy_count, turbo_sell_count, turbo_hold_count][i]) 
+                               for i in range(3) if actions_turbo[i] > 0]
     if turbo_actions_filtered:
-        turbo_vals, turbo_labels, turbo_colors = zip(*turbo_actions_filtered)
+        turbo_vals, turbo_names, turbo_colors, turbo_counts = zip(*turbo_actions_filtered)
         wedges, texts, autotexts = ax2.pie(
             turbo_vals,
-            labels=turbo_labels,
+            labels=None,  # No labels directly on pie
             autopct="%1.1f%%",
             colors=turbo_colors,
             startangle=90,
@@ -340,6 +384,10 @@ def plot_action_distribution_comparison(baseline_eval: Path, turbo_eval: Path, o
             autotext.set_color("white")
             autotext.set_fontweight("bold")
             autotext.set_fontsize(11)
+        
+        # Add legend with action names and counts
+        legend_labels = [f"{turbo_names[i]} ({turbo_counts[i]})" for i in range(len(turbo_names))]
+        ax2.legend(legend_labels, loc="upper left", bbox_to_anchor=(0, 0, 0.5, 1), fontsize=10)
     
     ax2.set_title("Turbo Action Distribution", fontsize=13, fontweight="bold", pad=20)
     
