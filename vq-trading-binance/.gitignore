@@ -27,8 +27,7 @@ wheels/
 *.egg
 
 # Data & Logs
-experiments/logs/*
-experiments/checkpoints/*
+experiments/
 !experiments/logs/.gitkeep
 !experiments/checkpoints/.gitkeep
 models/

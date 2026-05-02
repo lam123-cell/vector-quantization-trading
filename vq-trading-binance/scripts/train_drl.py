@@ -25,7 +25,11 @@ from typing import Literal
 
 import pandas as pd
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import CheckpointCallback
+import time
+import psutil
+import numpy as np
+import pandas as pd
+from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback, CallbackList
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -148,7 +152,7 @@ def train_ppo(
     n_steps: int,
     output_dir: Path,
     verbose: int,
-) -> PPO:
+) -> tuple[PPO, BaseCallback]:
     """Train PPO model on environment."""
     print(f"\n[*] Creating PPO model")
     print(f"    - Learning rate: {learning_rate}")
@@ -176,21 +180,55 @@ def train_ppo(
         name_prefix="ppo",
         save_replay_buffer=False,
     )
+
+    # Metrics callback to record memory usage and rewards for policy stability
+    class MetricsCallback(BaseCallback):
+        def __init__(self, verbose=0):
+            super().__init__(verbose)
+            self.memory_usage: list[float] = []
+            self.rewards: list[float] = []
+
+        def _on_step(self) -> bool:
+            # sample memory every 100 calls
+            try:
+                if self.n_calls % 100 == 0:
+                    mem_gb = psutil.virtual_memory().used / (1024 ** 3)
+                    self.memory_usage.append(mem_gb)
+            except Exception:
+                pass
+
+            # record reward if present in locals
+            try:
+                local_rewards = self.locals.get("rewards") or self.locals.get("reward")
+                if local_rewards:
+                    # local_rewards can be list/np array or single value
+                    if isinstance(local_rewards, (list, tuple, np.ndarray)):
+                        self.rewards.append(float(local_rewards[0]))
+                    else:
+                        self.rewards.append(float(local_rewards))
+            except Exception:
+                pass
+
+            return True
+
+    metrics_callback = MetricsCallback()
     
     print(f"\n[*] Training PPO for {timesteps:,} timesteps")
     print(f"    - Output: {output_dir}")
     print("=" * 80)
     
+    # combine callbacks so both checkpoint and metrics are used
+    callback_list = CallbackList([checkpoint_callback, metrics_callback])
     model.learn(
         total_timesteps=timesteps,
-        callback=checkpoint_callback,
+        callback=callback_list,
         progress_bar=True,
     )
     
     print("=" * 80)
     print(f"[✓] Training complete!")
     
-    return model
+    return model, metrics_callback
 
 
 def save_model(model: PPO, env: TradingEnv, output_dir: Path) -> None:
@@ -254,7 +292,9 @@ def main() -> int:
         print(f"    - Action space: {env.action_space}")
         
         # Train model
-        model = train_ppo(
+        start_time = time.time()
+
+        model, metrics_callback = train_ppo(
             env=env,
             timesteps=args.timesteps,
             learning_rate=args.learning_rate,
@@ -263,6 +303,41 @@ def main() -> int:
             output_dir=args.output,
             verbose=args.verbose,
         )
+
+        end_time = time.time()
+        processing_time = end_time - start_time
+        try:
+            avg_memory_gb = float(np.mean(metrics_callback.memory_usage)) if metrics_callback.memory_usage else None
+        except Exception:
+            avg_memory_gb = None
+        try:
+            policy_stability = float(np.std(metrics_callback.rewards)) if metrics_callback.rewards else None
+        except Exception:
+            policy_stability = None
+
+        # Save training metrics CSV
+        training_metrics = {
+            "processing_time_sec": processing_time,
+            "memory_usage_gb": avg_memory_gb,
+            "policy_stability": policy_stability,
+            "feature_set": args.feature_set,
+            "timesteps": args.timesteps,
+        }
+        training_metrics_df = pd.DataFrame([training_metrics])
+        training_metrics_filename = args.output / f"training_metrics_{args.feature_set}.csv"
+        training_metrics_df.to_csv(training_metrics_filename, index=False)
+        print(f"[*] Saved training metrics: {training_metrics_filename}")
+
+        # Attempt to copy to Google Drive path if available (Colab)
+        try:
+            import shutil
+            drive_path = Path("/content/drive/MyDrive/thesis")
+            drive_path.mkdir(parents=True, exist_ok=True)
+            shutil.copy(str(training_metrics_filename), str(drive_path / training_metrics_filename.name))
+            print(f"[*] Copied training metrics to Drive: {drive_path / training_metrics_filename.name}")
+        except Exception:
+            # not fatal; just report
+            print("[!] Google Drive copy skipped or failed (not on Colab?)")
         
         # Save model
         save_model(model, env, args.output)
