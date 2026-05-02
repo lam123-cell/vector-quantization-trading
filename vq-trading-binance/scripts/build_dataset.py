@@ -46,7 +46,13 @@ def _select_output_columns(columns: list[str], prefix: str) -> list[str]:
         raise ValueError(f"dataset_master.csv missing required feature group: {prefix}*")
 
     ohlcv_columns = [column for column in ["open", "high", "low", "close", "volume"] if column in columns]
-    return [time_column] + ohlcv_columns + feature_columns
+    # For turbo feature set, include TQ meta columns (tq_code, tq_regime, tq_score, tq_error, tq_confidence)
+    meta_cols: list[str] = []
+    if prefix.startswith("tq_xhat_"):
+        possible_meta = ["tq_code", "tq_regime", "tq_score", "tq_error", "tq_confidence"]
+        meta_cols = [c for c in possible_meta if c in columns]
+
+    return [time_column] + ohlcv_columns + feature_columns + meta_cols
 
 
 def _load_and_clean_dataset(dataset_master: Path, output_columns: list[str]) -> pd.DataFrame:
