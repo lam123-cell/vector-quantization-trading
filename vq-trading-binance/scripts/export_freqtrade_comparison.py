@@ -81,6 +81,32 @@ def auto_find_backtest_file(root: Path, preferred_keyword: str | None = None) ->
     return sorted(candidates, key=lambda item: item.stat().st_mtime, reverse=True)[0]
 
 
+def auto_find_backtest_file_for_strategy(root: Path, strategy_name: str) -> Path | None:
+    """Find the newest backtest file that contains the requested strategy."""
+    candidates = []
+    for pattern in ["backtest-result-*.zip", "backtest-result-*.json", "*.zip", "*.json"]:
+        candidates.extend(root.glob(pattern))
+
+    candidates = [path for path in candidates if path.is_file()]
+    candidates = sorted(candidates, key=lambda item: item.stat().st_mtime, reverse=True)
+
+    for path in candidates:
+        try:
+            payload = load_backtest_payload(path)
+        except Exception:
+            continue
+
+        strategies = payload.get("strategy", {}) or payload.get("strategy_comparison", {})
+        if isinstance(strategies, dict) and strategy_name in strategies:
+            return path
+
+        metadata = payload.get("metadata", {}) if isinstance(payload, dict) else {}
+        if isinstance(metadata, dict) and metadata.get("strategy") == strategy_name:
+            return path
+
+    return None
+
+
 def parse_datetime(value: Any) -> pd.Timestamp | None:
     if value is None or value == "":
         return None
@@ -123,8 +149,92 @@ def safe_mean(values: list[float | None]) -> float | None:
     return float(np.mean(cleaned))
 
 
+def extract_drawdown_pct(strategy_data: dict[str, Any], trades_df: pd.DataFrame | None = None) -> float:
+    """Extract max drawdown as a percentage from the best available source."""
+    for key in ("max_relative_drawdown", "max_drawdown_account", "max_drawdown"):
+        value = strategy_data.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            drawdown = float(value)
+        except (TypeError, ValueError):
+            continue
+        if key == "max_drawdown":
+            return drawdown * 100.0 if abs(drawdown) <= 1.0 else drawdown
+        return drawdown * 100.0 if abs(drawdown) <= 1.0 else drawdown
+
+    if trades_df is not None and not trades_df.empty and "profit_abs" in trades_df.columns:
+        equity_series = 1000.0 + trades_df["profit_abs"].cumsum().astype(float)
+        peak = equity_series.cummax()
+        drawdowns = ((equity_series - peak) / peak.replace(0, np.nan)) * 100.0
+        if not drawdowns.empty and not pd.isna(drawdowns.min()):
+            return abs(float(drawdowns.min()))
+
+    return 0.0
+
+
 def extract_freqtrade_report(payload: dict[str, Any], strategy_name: str | None = None) -> FreqtradeReport:
-    """Extract a single Freqtrade strategy report from backtest payload."""
+    """Extract a single Freqtrade strategy report from backtest payload.
+    
+    Supports two formats:
+    1. Backtest ZIP format: {"strategy": {strategy_name: {...}}}
+    2. Trades JSON format: {"trades": [...], "metadata": {...}}
+    """
+    # Handle trades.json format (only has "trades" key)
+    if "trades" in payload and "strategy" not in payload and "strategy_comparison" not in payload:
+        trades = payload.get("trades", []) or []
+        metadata = payload.get("metadata", {})
+        strat_name = metadata.get("strategy", "Unknown Strategy")
+        
+        # Calculate metrics directly from trades
+        trades_df = pd.DataFrame(trades)
+        if not trades_df.empty:
+            if "close_date" in trades_df.columns:
+                trades_df["_close_dt"] = pd.to_datetime(trades_df["close_date"], errors="coerce", utc=True).dt.tz_convert(None)
+                trades_df = trades_df.sort_values("_close_dt", na_position="last")
+            elif "close_time" in trades_df.columns:
+                trades_df["_close_dt"] = pd.to_datetime(trades_df["close_time"], errors="coerce", utc=True).dt.tz_convert(None)
+                trades_df = trades_df.sort_values("_close_dt", na_position="last")
+        
+        # Ensure profit_abs is numeric
+        if not trades_df.empty and "profit_abs" in trades_df.columns:
+            trades_df["profit_abs"] = pd.to_numeric(trades_df["profit_abs"], errors="coerce").fillna(0.0)
+        
+        starting_balance = 1000.0  # Default if not in trades.json
+        total_profit_usdt = sum(float(trade.get("profit_abs", 0.0)) for trade in trades)
+        final_balance = starting_balance + total_profit_usdt
+        total_profit_pct = (total_profit_usdt / starting_balance * 100.0) if starting_balance > 0 else 0.0
+        
+        num_trades = len(trades)
+        winning_trades = sum(1 for trade in trades if float(trade.get("profit_abs", 0.0)) > 0)
+        winrate_pct = (winning_trades / num_trades * 100.0) if num_trades > 0 else 0.0
+        
+        gross_profit = sum(max(0.0, float(trade.get("profit_abs", 0.0))) for trade in trades)
+        gross_loss = abs(sum(min(0.0, float(trade.get("profit_abs", 0.0))) for trade in trades))
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else 0.0
+        
+        avg_trade_duration_min = safe_mean([estimate_trade_duration_minutes(trade) for trade in trades])
+        
+        # Calculate max drawdown from cumulative profit
+        equity_series = starting_balance + trades_df["profit_abs"].cumsum().astype(float)
+        peak = equity_series.cummax()
+        drawdowns = ((equity_series - peak) / peak.replace(0, np.nan)) * 100.0
+        max_drawdown_pct = abs(drawdowns.min()) if not drawdowns.empty else 0.0
+        
+        return FreqtradeReport(
+            strategy_name=strat_name,
+            trades=trades_df,
+            starting_balance=starting_balance,
+            final_balance=final_balance,
+            total_profit_pct=total_profit_pct,
+            winrate_pct=winrate_pct,
+            num_trades=num_trades,
+            max_drawdown_pct=max_drawdown_pct,
+            profit_factor=profit_factor,
+            avg_trade_duration_min=avg_trade_duration_min,
+        )
+    
+    # Handle backtest ZIP format
     strategies = payload.get("strategy", {}) or payload.get("strategy_comparison", {})
     if not strategies:
         raise ValueError("No strategy data found in backtest payload")
@@ -152,7 +262,7 @@ def extract_freqtrade_report(payload: dict[str, Any], strategy_name: str | None 
     starting_balance = float(strat_data.get("starting_balance", 1000))
     final_balance = float(strat_data.get("final_balance", starting_balance))
     total_profit_pct = float(strat_data.get("profit_total", strat_data.get("profit_total_pct", 0.0)))
-    max_drawdown_pct = float(strat_data.get("max_drawdown", 0.0)) * 100.0
+    max_drawdown_pct = extract_drawdown_pct(strat_data, trades_df)
 
     num_trades = len(trades)
     winning_trades = sum(1 for trade in trades if float(trade.get("profit_abs", 0.0)) > 0)
@@ -208,47 +318,7 @@ def build_equity_frame(report: FreqtradeReport) -> pd.DataFrame:
     ).dropna(subset=["time"])
 
 
-def load_optional_metric_csvs() -> dict[str, dict[str, float | str]]:
-    """Load extra framework metrics used in the thesis table when available."""
-    metrics: dict[str, dict[str, float | str]] = {
-        "baseline_training": {},
-        "turbo_training": {},
-        "turbo_tq": {},
-    }
 
-    baseline_training_path = Path("experiments/runs/training_metrics_baseline.csv")
-    turbo_training_path = Path("experiments/runs/training_metrics_turbo.csv")
-    tq_path = Path("experiments/runs/tq_metrics_turbo.csv")
-
-    if baseline_training_path.exists():
-        df = pd.read_csv(baseline_training_path)
-        if not df.empty:
-            row = df.iloc[0]
-            metrics["baseline_training"] = {
-                "processing_time_sec": float(row.get("processing_time_sec", np.nan)),
-                "memory_usage_gb": float(row.get("memory_usage_gb", np.nan)),
-                "policy_stability": float(row.get("policy_stability", np.nan)),
-            }
-
-    if turbo_training_path.exists():
-        df = pd.read_csv(turbo_training_path)
-        if not df.empty:
-            row = df.iloc[0]
-            metrics["turbo_training"] = {
-                "processing_time_sec": float(row.get("processing_time_sec", np.nan)),
-                "memory_usage_gb": float(row.get("memory_usage_gb", np.nan)),
-                "policy_stability": float(row.get("policy_stability", np.nan)),
-            }
-
-    if tq_path.exists():
-        df = pd.read_csv(tq_path)
-        if not df.empty:
-            row = df.iloc[0]
-            metrics["turbo_tq"] = {
-                "tq_error_pct": float(row.get("median", np.nan)) * 100.0,
-            }
-
-    return metrics
 
 
 def fmt_float(value: float | None, suffix: str = "", digits: int = 2) -> str:
@@ -289,21 +359,6 @@ def _improvement_money(base: float | None, turbo: float | None) -> str:
 
 def create_metrics_table_image(baseline_report: FreqtradeReport | None, turbo_report: FreqtradeReport | None, output_image: Path) -> None:
     """Create a clean comparison table for thesis use."""
-    extra = load_optional_metric_csvs()
-
-    baseline_training = extra.get("baseline_training", {})
-    turbo_training = extra.get("turbo_training", {})
-    turbo_tq = extra.get("turbo_tq", {})
-
-    def get_training_value(training: dict[str, float | str], key: str) -> float | None:
-        value = training.get(key)
-        return float(value) if value is not None and not pd.isna(value) else None
-
-    baseline_processing = get_training_value(baseline_training, "processing_time_sec")
-    turbo_processing = get_training_value(turbo_training, "processing_time_sec")
-    baseline_memory = get_training_value(baseline_training, "memory_usage_gb")
-    turbo_memory = get_training_value(turbo_training, "memory_usage_gb")
-
     rows = [
         ["Metric", "Baseline", "Turbo", "Improvement"],
         ["Total Profit (%)",
@@ -322,21 +377,6 @@ def create_metrics_table_image(baseline_report: FreqtradeReport | None, turbo_re
          fmt_money(turbo_report.final_balance if turbo_report else None),
          _improvement_money(baseline_report.final_balance if baseline_report else None,
                             turbo_report.final_balance if turbo_report else None)],
-        ["Processing Time",
-         fmt_float(baseline_processing, "s", 2),
-         fmt_float(turbo_processing, "s", 2),
-         _improvement_scalar(baseline_processing, turbo_processing, lower_is_better=True, suffix="s")],
-        ["Memory Usage",
-         fmt_float(baseline_memory * 1024 if baseline_memory is not None else None, " MB", 1),
-         fmt_float(turbo_memory * 1024 if turbo_memory is not None else None, " MB", 1),
-         _improvement_scalar((baseline_memory * 1024) if baseline_memory is not None else None,
-                             (turbo_memory * 1024) if turbo_memory is not None else None,
-                             lower_is_better=True,
-                             suffix=" MB")],
-        ["Distortion Error (tq_error)",
-         "N/A",
-         fmt_float(turbo_tq.get("tq_error_pct") if turbo_tq else None, "%", 2),
-         "-"],
         ["Trades",
          fmt_float(baseline_report.num_trades if baseline_report else None, digits=0),
          fmt_float(turbo_report.num_trades if turbo_report else None, digits=0),
@@ -531,8 +571,23 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     freqtrade_root = Path("freqtrade_setup/user_data/backtest_results")
-    baseline_path = args.baseline or auto_find_backtest_file(freqtrade_root, "baseline")
-    turbo_path = args.turbo or auto_find_backtest_file(freqtrade_root, "turbo")
+    baseline_path = args.baseline or auto_find_backtest_file_for_strategy(freqtrade_root, args.baseline_strategy or "FQ_BaselineFairStrategy")
+    turbo_path = args.turbo or auto_find_backtest_file_for_strategy(freqtrade_root, args.turbo_strategy or "FQ_TurboCoreFairStrategy")
+
+    if baseline_path is None:
+        baseline_path = auto_find_backtest_file(freqtrade_root, "baseline")
+    if turbo_path is None:
+        turbo_path = auto_find_backtest_file(freqtrade_root, "turbo")
+
+    if baseline_path == turbo_path:
+        ordered = sorted(
+            [path for path in freqtrade_root.glob("backtest-result-*.zip") if path.is_file()],
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+        if len(ordered) >= 2:
+            baseline_path = ordered[1]
+            turbo_path = ordered[0]
 
     baseline_report = build_report(baseline_path, args.baseline_strategy) if baseline_path else None
     turbo_report = build_report(turbo_path, args.turbo_strategy) if turbo_path else None
