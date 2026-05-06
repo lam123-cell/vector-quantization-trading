@@ -1,14 +1,17 @@
 import torch
 from torch.utils.data import DataLoader
 import numpy as np
-from collections import Counter
 import pandas as pd
+from collections import Counter
+import time
 
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
     accuracy_score,
-    f1_score
+    f1_score,
+    precision_score,
+    recall_score
 )
 
 from src.models.lstm import LSTMModel
@@ -16,7 +19,7 @@ from src.utils.dataset_loader import SequenceDataset
 
 
 # =========================
-# CONFIG (MUST MATCH TRAIN)
+# CONFIG
 # =========================
 DATA_DIR = "datasets/lstm"
 MODEL_PATH = "results/lstm/lstm_baseline.pt"
@@ -31,10 +34,10 @@ BATCH_SIZE = 128
 
 
 # =========================
-# LABEL (SAME AS BUILDER)
+# BUILD DF
 # =========================
-def build_df(master_path):
-    df = pd.read_csv(master_path)
+def build_df():
+    df = pd.read_csv("datasets/dataset_master.csv")
     df["time"] = pd.to_datetime(df["time"], utc=True)
     df = df.sort_values("time").reset_index(drop=True)
 
@@ -55,7 +58,7 @@ def build_df(master_path):
     cols = [c for c in df.columns if c.startswith("n_")]
     df = df.dropna(subset=["label"] + cols).reset_index(drop=True)
 
-    return df, cols
+    return df
 
 
 # =========================
@@ -70,19 +73,16 @@ dataset = SequenceDataset(
 )
 
 split = int(0.8 * len(dataset))
-val_idx = np.arange(split, len(dataset))
-
-val_ds = torch.utils.data.Subset(dataset, val_idx)
+val_ds = torch.utils.data.Subset(dataset, range(split, len(dataset)))
 val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False)
 
 labels = dataset.y.numpy()
-
 print("\n===== VALID LABEL DIST =====")
-print(Counter(labels[val_idx]))
+print(Counter(labels[split:]))
 
 
 # =========================
-# LOAD MODEL
+# MODEL
 # =========================
 input_dim = dataset[0][0].shape[-1]
 
@@ -94,38 +94,51 @@ model.eval()
 # =========================
 # INFERENCE
 # =========================
-preds_all = []
-trues_all = []
+start_time = time.time()
+
+preds_all, trues_all = [], []
 
 with torch.no_grad():
     for X, y in val_loader:
         X = X.to(DEVICE)
-
         out = model(X)
         preds = torch.argmax(out, dim=1)
 
         preds_all.extend(preds.cpu().numpy())
         trues_all.extend(y.numpy())
 
+latency = (time.time() - start_time) / len(preds_all)
+
 
 # =========================
-# METRICS
+# METRICS (ONE BLOCK)
 # =========================
-print("\n===== METRICS =====")
-print("Accuracy:", accuracy_score(trues_all, preds_all))
-print("F1 macro:", f1_score(trues_all, preds_all, average="macro"))
+acc = accuracy_score(trues_all, preds_all)
+f1 = f1_score(trues_all, preds_all, average="macro")
+precision = precision_score(trues_all, preds_all, average="macro")
+recall = recall_score(trues_all, preds_all, average="macro")
 
-print("\n===== REPORT =====")
+print("\n================ METRICS ================")
+print(f"Accuracy          : {acc:.4f}")
+print(f"F1 Macro          : {f1:.4f}")
+print(f"Precision Macro   : {precision:.4f}")
+print(f"Recall Macro      : {recall:.4f}")
+print(f"Prediction Latency: {latency:.6f} sec/sample")
+
+print("\n===== PRED DISTRIBUTION =====")
+print(Counter(preds_all))
+
+print("\n===== CLASSIFICATION REPORT =====")
 print(classification_report(trues_all, preds_all, digits=4))
 
-print("\n===== CONFUSION =====")
+print("\n===== CONFUSION MATRIX =====")
 print(confusion_matrix(trues_all, preds_all))
 
 
 # =========================
-# BACKTEST (FIXED INDEX)
+# BACKTEST
 # =========================
-df, cols = build_df("datasets/dataset_master.csv")
+df = build_df()
 
 capital = 1.0
 fee = 0.00075
@@ -133,9 +146,9 @@ fee = 0.00075
 trades = 0
 wins = 0
 returns = []
+equity_curve = []
 
 for i, pred in enumerate(preds_all):
-    # global index (IMPORTANT FIX)
     idx = split + i
 
     entry = idx + SEQ_LEN
@@ -163,10 +176,26 @@ for i, pred in enumerate(preds_all):
         wins += 1
 
     capital *= (1 + trade)
+    equity_curve.append(capital)
 
 
-print("\n===== BACKTEST =====")
-print("Trades:", trades)
-print("Winrate:", wins / trades if trades else 0)
-print("Return:", capital - 1)
-print("Avg trade:", np.mean(returns) if returns else 0)
+# drawdown
+equity_curve = np.array(equity_curve)
+if len(equity_curve) > 0:
+    peak = np.maximum.accumulate(equity_curve)
+    drawdown = (equity_curve - peak) / peak
+    max_dd = drawdown.min()
+else:
+    max_dd = 0
+
+
+print("\n================ BACKTEST ================")
+print(f"Trades           : {trades}")
+print(f"Winrate          : {wins / trades if trades else 0:.4f}")
+print(f"Total Return     : {capital - 1:.4f}")
+print(f"Avg Trade        : {np.mean(returns) if returns else 0:.6f}")
+print(f"Max Drawdown     : {max_dd:.4f}")
+
+np.save("results/baseline_preds.npy", preds_all)
+np.save("results/baseline_trues.npy", trues_all)
+np.save("results/baseline_returns.npy", returns)

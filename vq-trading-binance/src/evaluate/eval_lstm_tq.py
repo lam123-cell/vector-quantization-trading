@@ -1,14 +1,17 @@
 import torch
 from torch.utils.data import DataLoader
 import numpy as np
-from collections import Counter
 import pandas as pd
+from collections import Counter
+import time
 
 from sklearn.metrics import (
     classification_report,
     confusion_matrix,
     accuracy_score,
-    f1_score
+    f1_score,
+    precision_score,
+    recall_score
 )
 
 from src.models.lstm import LSTMModel
@@ -16,24 +19,25 @@ from src.utils.dataset_loader import SequenceDataset
 
 
 # =========================
-# CONFIG (MUST MATCH BUILDER)
+# CONFIG
 # =========================
 DATA_DIR = "datasets/lstm"
-MODEL_PATH = "results/lstm/lstm_baseline.pt"
-SCALER_PATH = f"{DATA_DIR}/baseline_scaler.joblib"
+MODEL_PATH = "results/lstm/lstm_tq.pt"
+SCALER_PATH = f"{DATA_DIR}/tq_scaler.joblib"
 
 SEQ_LEN = 50
-HORIZON = 10          # ✅ FIX
-THRESHOLD = 0.0025    # ✅ phải match builder
+HORIZON = 10
+THRESHOLD = 0.0025
 
-CONF_THRESHOLD = 0.55  # ✅ giảm xuống
+CONF_THRESHOLD = 0.55   # 🔥 quan trọng
+NOISE_FILTER = 0.002    # 🔥 lọc market noise
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = 128
 
 
 # =========================
-# BUILD DF (SAME AS BUILDER)
+# BUILD DF (MATCH BUILDER)
 # =========================
 def build_df():
     df = pd.read_csv("datasets/dataset_master.csv")
@@ -54,7 +58,7 @@ def build_df():
 
     df["label"] = df["future_return"].apply(label_fn)
 
-    cols = [c for c in df.columns if c.startswith("n_")]
+    cols = [c for c in df.columns if c.startswith("tq_")]
     df = df.dropna(subset=["label"] + cols).reset_index(drop=True)
 
     return df
@@ -64,8 +68,8 @@ def build_df():
 # LOAD DATA
 # =========================
 dataset = SequenceDataset(
-    f"{DATA_DIR}/lstm_baseline_X.npy",
-    f"{DATA_DIR}/lstm_baseline_y.npy",
+    f"{DATA_DIR}/lstm_tq_X.npy",
+    f"{DATA_DIR}/lstm_tq_y.npy",
     scale=True,
     split_ratio=0.8,
     scaler_path=SCALER_PATH
@@ -76,6 +80,7 @@ val_ds = torch.utils.data.Subset(dataset, range(split, len(dataset)))
 val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False)
 
 labels = dataset.y.numpy()
+
 print("\n===== VALID LABEL DIST =====")
 print(Counter(labels[split:]))
 
@@ -93,6 +98,8 @@ model.eval()
 # =========================
 # INFERENCE
 # =========================
+start_time = time.time()
+
 preds_all = []
 trues_all = []
 confs_all = []
@@ -102,7 +109,6 @@ with torch.no_grad():
         X = X.to(DEVICE)
 
         out = model(X)
-
         probs = torch.softmax(out, dim=1)
         conf, preds = torch.max(probs, dim=1)
 
@@ -110,27 +116,40 @@ with torch.no_grad():
         confs_all.extend(conf.cpu().numpy())
         trues_all.extend(y.numpy())
 
+latency = (time.time() - start_time) / len(preds_all)
+
 
 # =========================
 # DEBUG CONFIDENCE
 # =========================
-print("\n===== CONF DEBUG =====")
-print("Max:", np.max(confs_all))
-print("Min:", np.min(confs_all))
-print("Avg:", np.mean(confs_all))
+print("\n===== CONFIDENCE DEBUG =====")
+print(f"Max: {np.max(confs_all):.4f}")
+print(f"Min: {np.min(confs_all):.4f}")
+print(f"Avg: {np.mean(confs_all):.4f}")
 
 
 # =========================
-# METRICS
+# METRICS (ONE BLOCK)
 # =========================
-print("\n===== METRICS =====")
-print("Accuracy:", accuracy_score(trues_all, preds_all))
-print("F1 macro:", f1_score(trues_all, preds_all, average="macro"))
+acc = accuracy_score(trues_all, preds_all)
+f1 = f1_score(trues_all, preds_all, average="macro")
+precision = precision_score(trues_all, preds_all, average="macro")
+recall = recall_score(trues_all, preds_all, average="macro")
 
-print("\n===== REPORT =====")
+print("\n================ METRICS ================")
+print(f"Accuracy          : {acc:.4f}")
+print(f"F1 Macro          : {f1:.4f}")
+print(f"Precision Macro   : {precision:.4f}")
+print(f"Recall Macro      : {recall:.4f}")
+print(f"Prediction Latency: {latency:.6f} sec/sample")
+
+print("\n===== PRED DISTRIBUTION =====")
+print(Counter(preds_all))
+
+print("\n===== CLASSIFICATION REPORT =====")
 print(classification_report(trues_all, preds_all, digits=4))
 
-print("\n===== CONFUSION =====")
+print("\n===== CONFUSION MATRIX =====")
 print(confusion_matrix(trues_all, preds_all))
 
 
@@ -145,6 +164,7 @@ fee = 0.00075
 trades = 0
 wins = 0
 returns = []
+equity_curve = []
 
 for i, (pred, conf) in enumerate(zip(preds_all, confs_all)):
     idx = split + i
@@ -164,7 +184,7 @@ for i, (pred, conf) in enumerate(zip(preds_all, confs_all)):
     if conf < CONF_THRESHOLD:
         continue
 
-    if abs(ret) < 0.002:  # noise filter
+    if abs(ret) < NOISE_FILTER:
         continue
 
     if pred == 2:
@@ -181,10 +201,31 @@ for i, (pred, conf) in enumerate(zip(preds_all, confs_all)):
         wins += 1
 
     capital *= (1 + trade)
+    equity_curve.append(capital)
 
 
-print("\n===== BACKTEST =====")
-print("Trades:", trades)
-print("Winrate:", wins / trades if trades else 0)
-print("Return:", capital - 1)
-print("Avg trade:", np.mean(returns) if returns else 0)
+# ===== DRAW DOWN =====
+equity_curve = np.array(equity_curve)
+
+if len(equity_curve) > 0:
+    peak = np.maximum.accumulate(equity_curve)
+    drawdown = (equity_curve - peak) / peak
+    max_dd = drawdown.min()
+else:
+    max_dd = 0
+
+
+# =========================
+# BACKTEST METRICS
+# =========================
+print("\n================ BACKTEST ================")
+print(f"Trades           : {trades}")
+print(f"Winrate          : {wins / trades if trades else 0:.4f}")
+print(f"Total Return     : {capital - 1:.4f}")
+print(f"Avg Trade        : {np.mean(returns) if returns else 0:.6f}")
+print(f"Max Drawdown     : {max_dd:.4f}")
+
+np.save("results/tq_preds.npy", preds_all)
+np.save("results/tq_trues.npy", trues_all)
+np.save("results/tq_returns.npy", returns)
+np.save("results/tq_confs.npy", confs_all)
