@@ -33,6 +33,7 @@ def get_metrics(trues, preds, returns):
 
     if trades > 0:
         winrate = sum(1 for r in returns if r > 0) / trades
+        avg_trade = np.mean(returns)
 
         capital = 1.0
         equity = []
@@ -47,8 +48,10 @@ def get_metrics(trues, preds, returns):
 
         max_dd = drawdown.min()
         total_return = capital - 1
+
     else:
         winrate = 0
+        avg_trade = 0
         max_dd = 0
         total_return = 0
 
@@ -57,9 +60,12 @@ def get_metrics(trues, preds, returns):
         "f1": f1,
         "precision": precision,
         "recall": recall,
+
+        "trades": trades,
+        "winrate": winrate,
+        "avg_trade": avg_trade,
         "return": total_return,
-        "dd": max_dd,
-        "winrate": winrate
+        "dd": max_dd
     }
 
 
@@ -75,7 +81,7 @@ tq_m   = get_metrics(tq_trues, tq_preds, tq_returns)
 plot_compare_equity_dd(base_returns, tq_returns)
 
 # 2. Trading insight
-plot_compare_trading(base_m, tq_m)
+save_metrics_table(base_m, tq_m)
 
 # 3. ML vs Trading mismatch
 plot_compare_classification(base_m, tq_m)

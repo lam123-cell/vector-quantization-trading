@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+import pandas as pd
 from sklearn.metrics import confusion_matrix
 
 
@@ -103,29 +104,78 @@ def plot_compare_classification(base_m, tq_m):
 
 
 # =========================
-# COMPARE TRADING
+# SAVE METRICS TABLE PNG
 # =========================
-def plot_compare_trading(base_m, tq_m):
-    labels = ["Return", "Winrate"]
+def save_metrics_table(base_m, tq_m):
 
-    base_vals = [base_m["return"], base_m["winrate"]]
-    tq_vals = [tq_m["return"], tq_m["winrate"]]
+    df = pd.DataFrame({
+        "Metric": [
+            "Accuracy",
+            "F1 Macro",
+            "Precision",
+            "Recall",
+            "Trades",
+            "Winrate",
+            "Avg Trade",
+            "Total Return",
+            "Max Drawdown"
+        ],
 
-    x = np.arange(len(labels))
-    width = 0.35
+        "Baseline": [
+            f"{base_m['acc']:.4f}",
+            f"{base_m['f1']:.4f}",
+            f"{base_m['precision']:.4f}",
+            f"{base_m['recall']:.4f}",
+            f"{base_m['trades']}",
+            f"{base_m['winrate']:.4f}",
+            f"{base_m['avg_trade']:.6f}",
+            f"{base_m['return']:.4f}",
+            f"{base_m['dd']:.4f}"
+        ],
 
-    plt.figure(figsize=(6,4))
-    plt.bar(x - width/2, base_vals, width, label="Baseline")
-    plt.bar(x + width/2, tq_vals, width, label="TurboQuant")
+        "TurboQuant": [
+            f"{tq_m['acc']:.4f}",
+            f"{tq_m['f1']:.4f}",
+            f"{tq_m['precision']:.4f}",
+            f"{tq_m['recall']:.4f}",
+            f"{tq_m['trades']}",
+            f"{tq_m['winrate']:.4f}",
+            f"{tq_m['avg_trade']:.6f}",
+            f"{tq_m['return']:.4f}",
+            f"{tq_m['dd']:.4f}"
+        ]
+    })
 
-    plt.xticks(x, labels)
-    plt.title("Trading Performance")
-    plt.legend()
+    # ===== DRAW TABLE =====
+    fig, ax = plt.subplots(figsize=(8, 3))
+
+    ax.axis("off")
+
+    table = ax.table(
+        cellText=df.values,
+        colLabels=df.columns,
+        cellLoc="center",
+        loc="center"
+    )
+
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+
+    table.scale(1, 1.5)
+
+    plt.title("Final Metrics Comparison", pad=20)
 
     plt.tight_layout()
-    plt.savefig("results/plots/compare_trading.png")
+
+    plt.savefig(
+        "results/plots/final_metrics_table.png",
+        dpi=300,
+        bbox_inches="tight"
+    )
+
     plt.close()
 
+    print("\n✅ Saved metrics table PNG")
 
 # =========================
 # CONFIDENCE SWEEP (KEY IDEA)
