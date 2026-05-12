@@ -77,25 +77,11 @@ def create_metrics_table_image(baseline_eval: Path, turbo_eval: Path, output_ima
     except:
         pass
     
-    # Load TQ metrics CSV (optional, for distortion error)
-    turbo_distortion = "N/A"
-    try:
-        df_tq = pd.read_csv("experiments/runs/tq_metrics_turbo.csv")
-        if len(df_tq) > 0:
-            turbo_distortion = f"{df_tq.iloc[0]['median']*100:.2f}%"
-    except:
-        pass
-    
-    # 10 core metrics for thesis
+    # 8 core metrics for thesis
     table_data = [
-        ["Metric", "Baseline", "Turbo", "Improvement"],
+        ["Metric", "Kịch bản 3 (Baseline)", "Kịch bản 4 (Turbo)", "Improvement"],
         
         # Financial Performance
-        ["Total Profit (%)", 
-         f"{baseline_m.get('total_return_pct', 0)*100:.2f}%",
-         f"{turbo_m.get('total_return_pct', 0)*100:.2f}%",
-         f"{(turbo_m.get('total_return_pct', 0) - baseline_m.get('total_return_pct', 0))*100:+.2f}pp"],
-        
         ["Max Drawdown (%)",
          f"{baseline_m.get('max_drawdown', 0)*100:.2f}%",
          f"{turbo_m.get('max_drawdown', 0)*100:.2f}%",
@@ -117,19 +103,8 @@ def create_metrics_table_image(baseline_eval: Path, turbo_eval: Path, output_ima
          f"{turbo_training.get('memory_usage_gb', 0)*1024:.1f}" if turbo_training else "TBD",
          "-"],
         
-        ["Distortion Error (%)",
-         "N/A",
-         turbo_distortion,
-         "-"],
-
-        
         # DRL Learning Metrics
         ["Average Reward",
-         f"{baseline_m.get('total_reward', 0):.2f}",
-         f"{turbo_m.get('total_reward', 0):.2f}",
-         f"{turbo_m.get('total_reward', 0) - baseline_m.get('total_reward', 0):+.2f}"],
-        
-        ["Episode Reward",
          f"{baseline_m.get('total_reward', 0):.2f}",
          f"{turbo_m.get('total_reward', 0):.2f}",
          f"{turbo_m.get('total_reward', 0) - baseline_m.get('total_reward', 0):+.2f}"],
@@ -165,8 +140,8 @@ def create_metrics_table_image(baseline_eval: Path, turbo_eval: Path, output_ima
         table[(0, i)].set_linewidth(2)
     
     # Style data rows with alternating colors and grouped sections
-    # Financial Performance rows (1-3)
-    for i in range(1, 4):
+    # Financial Performance rows (1-2)
+    for i in range(1, 3):
         for j in range(4):
             if i % 2 == 1:
                 table[(i, j)].set_facecolor("#ecf0f1")
@@ -176,8 +151,8 @@ def create_metrics_table_image(baseline_eval: Path, turbo_eval: Path, output_ima
             table[(i, j)].set_edgecolor("#bdc3c7")
             table[(i, j)].set_linewidth(1)
     
-    # Resource Metrics rows (4-6)
-    for i in range(4, 7):
+    # Resource Metrics rows (3-5)
+    for i in range(3, 6):
         for j in range(4):
             if i % 2 == 1:
                 table[(i, j)].set_facecolor("#fef5e7")
@@ -187,8 +162,8 @@ def create_metrics_table_image(baseline_eval: Path, turbo_eval: Path, output_ima
             table[(i, j)].set_edgecolor("#bdc3c7")
             table[(i, j)].set_linewidth(1)
     
-    # DRL Learning Metrics rows (7-10)
-    for i in range(7, 11):
+    # DRL Learning Metrics rows (7-9)
+    for i in range(7, len(table_data)):
         for j in range(4):
             if i % 2 == 1:
                 table[(i, j)].set_facecolor("#e8f8f5")

@@ -38,11 +38,10 @@ class FreqtradeReport:
     starting_balance: float
     final_balance: float
     total_profit_pct: float
-    winrate_pct: float
     num_trades: int
     max_drawdown_pct: float
-    profit_factor: float
     avg_trade_duration_min: float | None
+    avg_profit_per_trade_usdt: float | None
 
 
 def load_backtest_payload(path: Path) -> dict[str, Any]:
@@ -206,14 +205,8 @@ def extract_freqtrade_report(payload: dict[str, Any], strategy_name: str | None 
         total_profit_pct = (total_profit_usdt / starting_balance * 100.0) if starting_balance > 0 else 0.0
         
         num_trades = len(trades)
-        winning_trades = sum(1 for trade in trades if float(trade.get("profit_abs", 0.0)) > 0)
-        winrate_pct = (winning_trades / num_trades * 100.0) if num_trades > 0 else 0.0
-        
-        gross_profit = sum(max(0.0, float(trade.get("profit_abs", 0.0))) for trade in trades)
-        gross_loss = abs(sum(min(0.0, float(trade.get("profit_abs", 0.0))) for trade in trades))
-        profit_factor = gross_profit / gross_loss if gross_loss > 0 else 0.0
-        
         avg_trade_duration_min = safe_mean([estimate_trade_duration_minutes(trade) for trade in trades])
+        avg_profit_per_trade_usdt = (total_profit_usdt / num_trades) if num_trades > 0 else None
         
         # Calculate max drawdown from cumulative profit
         equity_series = starting_balance + trades_df["profit_abs"].cumsum().astype(float)
@@ -227,11 +220,10 @@ def extract_freqtrade_report(payload: dict[str, Any], strategy_name: str | None 
             starting_balance=starting_balance,
             final_balance=final_balance,
             total_profit_pct=total_profit_pct,
-            winrate_pct=winrate_pct,
             num_trades=num_trades,
             max_drawdown_pct=max_drawdown_pct,
-            profit_factor=profit_factor,
             avg_trade_duration_min=avg_trade_duration_min,
+            avg_profit_per_trade_usdt=avg_profit_per_trade_usdt,
         )
     
     # Handle backtest ZIP format
@@ -265,14 +257,8 @@ def extract_freqtrade_report(payload: dict[str, Any], strategy_name: str | None 
     max_drawdown_pct = extract_drawdown_pct(strat_data, trades_df)
 
     num_trades = len(trades)
-    winning_trades = sum(1 for trade in trades if float(trade.get("profit_abs", 0.0)) > 0)
-    winrate_pct = (winning_trades / num_trades * 100.0) if num_trades > 0 else 0.0
-
-    gross_profit = sum(max(0.0, float(trade.get("profit_abs", 0.0))) for trade in trades)
-    gross_loss = abs(sum(min(0.0, float(trade.get("profit_abs", 0.0))) for trade in trades))
-    profit_factor = gross_profit / gross_loss if gross_loss > 0 else 0.0
-
     avg_trade_duration_min = safe_mean([estimate_trade_duration_minutes(trade) for trade in trades])
+    avg_profit_per_trade_usdt = (sum(float(trade.get("profit_abs", 0.0)) for trade in trades) / num_trades) if num_trades > 0 else None
 
     if not trades_df.empty and "profit_abs" in trades_df.columns:
         trades_df["profit_abs"] = pd.to_numeric(trades_df["profit_abs"], errors="coerce").fillna(0.0)
@@ -283,11 +269,10 @@ def extract_freqtrade_report(payload: dict[str, Any], strategy_name: str | None 
         starting_balance=starting_balance,
         final_balance=final_balance,
         total_profit_pct=total_profit_pct,
-        winrate_pct=winrate_pct,
         num_trades=num_trades,
         max_drawdown_pct=max_drawdown_pct,
-        profit_factor=profit_factor,
         avg_trade_duration_min=avg_trade_duration_min,
+        avg_profit_per_trade_usdt=avg_profit_per_trade_usdt,
     )
 
 
@@ -360,12 +345,7 @@ def _improvement_money(base: float | None, turbo: float | None) -> str:
 def create_metrics_table_image(baseline_report: FreqtradeReport | None, turbo_report: FreqtradeReport | None, output_image: Path) -> None:
     """Create a clean comparison table for thesis use."""
     rows = [
-        ["Metric", "Baseline", "Turbo", "Improvement"],
-        ["Total Profit (%)",
-         fmt_float(baseline_report.total_profit_pct if baseline_report else None, "%", 2),
-         fmt_float(turbo_report.total_profit_pct if turbo_report else None, "%", 2),
-         _improvement_pct(baseline_report.total_profit_pct if baseline_report else None,
-                          turbo_report.total_profit_pct if turbo_report else None)],
+        ["Metric", "Kịch bản 5 (Baseline)", "Kịch bản 6 (Turbo)", "Improvement"],
         ["Max Drawdown (%)",
          fmt_float(baseline_report.max_drawdown_pct if baseline_report else None, "%", 2),
          fmt_float(turbo_report.max_drawdown_pct if turbo_report else None, "%", 2),
@@ -377,21 +357,16 @@ def create_metrics_table_image(baseline_report: FreqtradeReport | None, turbo_re
          fmt_money(turbo_report.final_balance if turbo_report else None),
          _improvement_money(baseline_report.final_balance if baseline_report else None,
                             turbo_report.final_balance if turbo_report else None)],
+        ["Average Profit / Trade",
+         fmt_money(baseline_report.avg_profit_per_trade_usdt if baseline_report else None),
+         fmt_money(turbo_report.avg_profit_per_trade_usdt if turbo_report else None),
+         _improvement_money(baseline_report.avg_profit_per_trade_usdt if baseline_report else None,
+                            turbo_report.avg_profit_per_trade_usdt if turbo_report else None)],
         ["Trades",
          fmt_float(baseline_report.num_trades if baseline_report else None, digits=0),
          fmt_float(turbo_report.num_trades if turbo_report else None, digits=0),
          _improvement_scalar(baseline_report.num_trades if baseline_report else None,
                              turbo_report.num_trades if turbo_report else None)],
-        ["Winrate",
-         fmt_float(baseline_report.winrate_pct if baseline_report else None, "%", 2),
-         fmt_float(turbo_report.winrate_pct if turbo_report else None, "%", 2),
-         _improvement_pct(baseline_report.winrate_pct if baseline_report else None,
-                          turbo_report.winrate_pct if turbo_report else None)],
-        ["Profit Factor",
-         fmt_float(baseline_report.profit_factor if baseline_report else None, digits=2),
-         fmt_float(turbo_report.profit_factor if turbo_report else None, digits=2),
-         _improvement_scalar(baseline_report.profit_factor if baseline_report else None,
-                             turbo_report.profit_factor if turbo_report else None)],
         ["Avg Trade Duration",
          fmt_float(baseline_report.avg_trade_duration_min if baseline_report else None, " min", 2),
          fmt_float(turbo_report.avg_trade_duration_min if turbo_report else None, " min", 2),
@@ -533,19 +508,33 @@ def plot_trade_distribution_comparison(baseline_report: FreqtradeReport, turbo_r
     plt.close(fig)
 
 
-def plot_winrate_comparison(baseline_report: FreqtradeReport, turbo_report: FreqtradeReport, output_image: Path) -> None:
-    fig, ax = plt.subplots(figsize=(10, 6))
-    names = ["Baseline", "Turbo"]
-    values = [baseline_report.winrate_pct, turbo_report.winrate_pct]
-    colors = ["steelblue", "darkorange"]
-    bars = ax.bar(names, values, color=colors, edgecolor="black", linewidth=1.2, alpha=0.85)
+def plot_profit_curve_comparison(baseline_report: FreqtradeReport, turbo_report: FreqtradeReport, output_image: Path) -> None:
+    fig, ax = plt.subplots(figsize=(14, 7))
 
-    for bar, value in zip(bars, values):
-        ax.text(bar.get_x() + bar.get_width() / 2.0, bar.get_height(), f"{value:.2f}%", ha="center", va="bottom", fontsize=11, fontweight="bold")
+    plotted = False
+    for report, color, label in [
+        (baseline_report, "steelblue", "Baseline"),
+        (turbo_report, "darkorange", "Turbo"),
+    ]:
+        frame = build_equity_frame(report)
+        if frame.empty:
+            continue
+        plotted = True
+        cumulative_profit = frame["equity"] - report.starting_balance
+        ax.plot(frame["time"], cumulative_profit, linewidth=2.2, label=label, color=color)
 
-    ax.set_ylabel("Winrate (%)", fontsize=12)
-    ax.set_title("Freqtrade - Winrate Comparison", fontsize=15, fontweight="bold")
-    ax.grid(True, alpha=0.25, axis="y")
+    if not plotted:
+        ax.text(0.5, 0.5, "No profit curve data found", transform=ax.transAxes, ha="center", va="center", fontsize=14)
+    else:
+        ax.axhline(y=0, color="gray", linestyle="--", linewidth=1.2, alpha=0.8, label="Starting Profit")
+
+    ax.set_xlabel("Time", fontsize=12)
+    ax.set_ylabel("Cumulative Profit (USDT)", fontsize=12)
+    ax.set_title("Freqtrade - Profit Curve", fontsize=15, fontweight="bold")
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.25)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M"))
+    fig.autofmt_xdate()
     fig.savefig(output_image, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -603,8 +592,8 @@ def main() -> None:
 
     plot_equity_curve_comparison(baseline_report, turbo_report, args.output_dir / "freqtrade_equity_curve.png")
     plot_drawdown_curve_comparison(baseline_report, turbo_report, args.output_dir / "freqtrade_drawdown_curve.png")
+    plot_profit_curve_comparison(baseline_report, turbo_report, args.output_dir / "freqtrade_profit_curve.png")
     plot_trade_distribution_comparison(baseline_report, turbo_report, args.output_dir / "freqtrade_trade_distribution.png")
-    plot_winrate_comparison(baseline_report, turbo_report, args.output_dir / "freqtrade_winrate_comparison.png")
 
     print(f"✓ Charts saved to: {args.output_dir}")
 
