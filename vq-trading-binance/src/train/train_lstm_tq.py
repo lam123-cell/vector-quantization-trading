@@ -37,7 +37,7 @@ dataset = SequenceDataset(
     f"{DATA_DIR}/lstm_tq_y.npy",
     scale=True,
     split_ratio=0.8,
-    scaler_path=f"{DATA_DIR}/scaler.joblib"
+    scaler_path=SCALER_PATH
 )
 
 labels = dataset.y.numpy()
@@ -52,9 +52,9 @@ print(Counter(labels))
 train_size = int(0.8 * len(dataset))
 train_labels = labels[:train_size]
 
-class_counts = np.bincount(train_labels)
+class_counts = np.bincount(train_labels, minlength=3)
 
-weights = 1.0 / class_counts
+weights = 1.0 / (class_counts + 1e-8)
 weights = weights / weights.sum()
 
 # boost BUY/SELL
@@ -166,6 +166,4 @@ for epoch in range(EPOCHS):
         print(f"Early stopping (no improvement {patience} epochs)")
         break
 
-
-torch.save(model.state_dict(), MODEL_PATH)
-print(f"[+] Saved model: {MODEL_PATH}")
+print(f"[+] Best model saved at: {MODEL_PATH}")
