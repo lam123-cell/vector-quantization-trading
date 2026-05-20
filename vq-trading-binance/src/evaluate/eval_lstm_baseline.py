@@ -1,7 +1,6 @@
 import torch
 from torch.utils.data import DataLoader
 import numpy as np
-import pandas as pd
 from collections import Counter
 import time
 
@@ -9,6 +8,7 @@ from sklearn.metrics import (
     classification_report,
     confusion_matrix,
     accuracy_score,
+    balanced_accuracy_score,
     f1_score,
     precision_score,
     recall_score
@@ -26,54 +26,9 @@ MODEL_PATH = "results/lstm/lstm_baseline.pt"
 SCALER_PATH = f"{DATA_DIR}/baseline_scaler.joblib"
 
 SEQ_LEN = 50
-HORIZON = 10
-THRESHOLD = 0.0025
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = 128
-
-
-# =========================
-# BUILD DF
-# =========================
-def build_df():
-
-    df = pd.read_csv("datasets/dataset_master.csv")
-
-    df["time"] = pd.to_datetime(df["time"], utc=True)
-
-    df = df.sort_values("time").reset_index(drop=True)
-
-    df["future_return"] = (
-        df["close"].shift(-HORIZON) / df["close"] - 1
-    )
-
-    def label_fn(x):
-
-        if pd.isna(x):
-            return np.nan
-
-        if x > THRESHOLD:
-            return 2
-
-        elif x < -THRESHOLD:
-            return 0
-
-        else:
-            return 1
-
-    df["label"] = df["future_return"].apply(label_fn)
-
-    cols = [
-        c for c in df.columns
-        if c.startswith("n_")
-    ]
-
-    df = df.dropna(
-        subset=["label"] + cols
-    ).reset_index(drop=True)
-
-    return df
 
 
 # =========================
@@ -196,12 +151,18 @@ recall = recall_score(
     average="macro"
 )
 
+balanced_acc = balanced_accuracy_score(
+    trues_all,
+    preds_all
+)
+
 print("\n================ METRICS ================")
 
 print(f"Accuracy          : {acc:.4f}")
 print(f"F1 Macro          : {f1:.4f}")
 print(f"Precision Macro   : {precision:.4f}")
 print(f"Recall Macro      : {recall:.4f}")
+print(f"Balanced Accuracy : {balanced_acc:.4f}")
 
 print(
     f"Prediction Latency: "
@@ -232,99 +193,6 @@ print(
 
 
 # =========================
-# BACKTEST
-# =========================
-df = build_df()
-
-capital = 1.0
-fee = 0.00075
-
-trades = 0
-wins = 0
-
-returns = []
-equity_curve = []
-
-for i, pred in enumerate(preds_all):
-
-    seq_idx = split + i
-
-    entry = seq_idx + SEQ_LEN
-    exit_ = entry + HORIZON
-
-    if exit_ >= len(df):
-        continue
-
-    p0 = df.loc[entry, "close"]
-    p1 = df.loc[exit_, "close"]
-
-    ret = (p1 - p0) / p0
-
-    if pred == 2:
-
-        trade = ret - 2 * fee
-
-    elif pred == 0:
-
-        trade = -ret - 2 * fee
-
-    else:
-        continue
-
-    trades += 1
-
-    returns.append(trade)
-
-    if trade > 0:
-        wins += 1
-
-    capital *= (1 + trade)
-
-    equity_curve.append(capital)
-
-
-# =========================
-# DRAWDOWN
-# =========================
-equity_curve = np.array(equity_curve)
-
-if len(equity_curve) > 0:
-
-    peak = np.maximum.accumulate(equity_curve)
-
-    drawdown = (
-        equity_curve - peak
-    ) / peak
-
-    max_dd = drawdown.min()
-
-else:
-    max_dd = 0
-
-
-# =========================
-# BACKTEST METRICS
-# =========================
-print("\n================ BACKTEST ================")
-
-print(f"Trades           : {trades}")
-
-print(
-    f"Winrate          : "
-    f"{wins / trades if trades else 0:.4f}"
-)
-
-print(f"Total Return     : {capital - 1:.4f}")
-
-print(
-    f"Avg Trade        : "
-    f"{np.mean(returns) if returns else 0:.6f}"
-)
-
-print(f"Max Drawdown     : {max_dd:.4f}")
-
-
-# =========================
 # SAVE
 # =========================
 np.save(
@@ -338,11 +206,11 @@ np.save(
 )
 
 np.save(
-    "results/baseline_returns.npy",
-    returns
+    "results/baseline_confs.npy",
+    confs_all
 )
 
 np.save(
-    "results/baseline_confs.npy",
-    confs_all
+    "results/baseline_latency.npy",
+    np.array([latency], dtype=np.float32)
 )

@@ -1,103 +1,85 @@
 import os
+
 import numpy as np
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score,
+)
 
-from src.utils.plot_utils import *
-
-os.makedirs("results/plots", exist_ok=True)
-
-
-# =========================
-# LOAD DATA
-# =========================
-base_preds = np.load("results/baseline_preds.npy")
-base_trues = np.load("results/baseline_trues.npy")
-base_returns = np.load("results/baseline_returns.npy")
-
-tq_preds = np.load("results/tq_preds.npy")
-tq_trues = np.load("results/tq_trues.npy")
-tq_returns = np.load("results/tq_returns.npy")
-tq_confs = np.load("results/tq_confs.npy")
+from src.utils.plot_utils import (
+    plot_compare_classification,
+    plot_confidence_distribution,
+    plot_confusion,
+    plot_prediction_distribution,
+    save_lstm_metrics_table,
+)
 
 
-# =========================
-# METRICS
-# =========================
-def get_metrics(trues, preds, returns):
-    acc = accuracy_score(trues, preds)
-    f1 = f1_score(trues, preds, average="macro")
-    precision = precision_score(trues, preds, average="macro")
-    recall = recall_score(trues, preds, average="macro")
+RESULT_DIR = "results"
 
-    trades = len(returns)
 
-    if trades > 0:
-        winrate = sum(1 for r in returns if r > 0) / trades
-        avg_trade = np.mean(returns)
+def load_array(path):
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Missing result file: {path}")
+    return np.load(path)
 
-        capital = 1.0
-        equity = []
 
-        for r in returns:
-            capital *= (1 + r)
-            equity.append(capital)
+def load_optional_latency(path):
+    if not os.path.exists(path):
+        return 0.0
+    return float(np.load(path)[0])
 
-        equity = np.array(equity)
-        peak = np.maximum.accumulate(equity)
-        drawdown = (equity - peak) / peak
 
-        max_dd = drawdown.min()
-        total_return = capital - 1
-
-    else:
-        winrate = 0
-        avg_trade = 0
-        max_dd = 0
-        total_return = 0
-
+def get_metrics(y_true, y_pred, confs, latency=0.0):
     return {
-        "acc": acc,
-        "f1": f1,
-        "precision": precision,
-        "recall": recall,
-
-        "trades": trades,
-        "winrate": winrate,
-        "avg_trade": avg_trade,
-        "return": total_return,
-        "dd": max_dd
+        "accuracy": accuracy_score(y_true, y_pred),
+        "macro_precision": precision_score(y_true, y_pred, average="macro", zero_division=0),
+        "macro_recall": recall_score(y_true, y_pred, average="macro", zero_division=0),
+        "macro_f1": f1_score(y_true, y_pred, average="macro", zero_division=0),
+        "balanced_accuracy": balanced_accuracy_score(y_true, y_pred),
+        "avg_confidence": float(np.mean(confs)),
+        "latency": latency,
     }
 
 
-base_m = get_metrics(base_trues, base_preds, base_returns)
-tq_m   = get_metrics(tq_trues, tq_preds, tq_returns)
+def main():
+    base_preds = load_array(f"{RESULT_DIR}/baseline_preds.npy")
+    base_trues = load_array(f"{RESULT_DIR}/baseline_trues.npy")
+    base_confs = load_array(f"{RESULT_DIR}/baseline_confs.npy")
+
+    tq_preds = load_array(f"{RESULT_DIR}/tq_preds.npy")
+    tq_trues = load_array(f"{RESULT_DIR}/tq_trues.npy")
+    tq_confs = load_array(f"{RESULT_DIR}/tq_confs.npy")
+    base_latency = load_optional_latency(f"{RESULT_DIR}/baseline_latency.npy")
+    tq_latency = load_optional_latency(f"{RESULT_DIR}/tq_latency.npy")
+
+    base_m = get_metrics(base_trues, base_preds, base_confs, latency=base_latency)
+    tq_m = get_metrics(tq_trues, tq_preds, tq_confs, latency=tq_latency)
+
+    plot_compare_classification(base_m, tq_m)
+    save_lstm_metrics_table(base_m, tq_m)
+    plot_prediction_distribution(base_trues, base_preds, tq_preds)
+    plot_confidence_distribution(base_confs, tq_confs)
+    plot_confusion(base_trues, base_preds, "Baseline LSTM")
+    plot_confusion(tq_trues, tq_preds, "TurboQuant LSTM")
+
+    print("\n===== LSTM COMPARISON =====")
+    for key in [
+        "accuracy",
+        "macro_precision",
+        "macro_recall",
+        "macro_f1",
+        "balanced_accuracy",
+        "avg_confidence",
+        "latency",
+    ]:
+        print(f"{key:18} | baseline: {base_m[key]:.6f} | turboquant: {tq_m[key]:.6f}")
+
+    print("\nPlots saved to: results/plots")
 
 
-# =========================
-# PLOTS (FINAL SET)
-# =========================
-
-# 1. Core result (QUAN TRỌNG NHẤT)
-plot_compare_equity_dd(base_returns, tq_returns)
-
-# 2. Trading insight
-save_metrics_table(base_m, tq_m)
-
-# 3. ML vs Trading mismatch
-plot_compare_classification(base_m, tq_m)
-
-# 4. TQ core idea
-plot_confidence_sweep(tq_preds, tq_confs, tq_returns)
-
-# 5. Confusion (TQ only)
-plot_confusion(tq_trues, tq_preds, "tq")
-
-
-# =========================
-# PRINT SUMMARY
-# =========================
-print("\n===== FINAL COMPARISON =====")
-for k in base_m:
-    print(f"{k:10} | base: {base_m[k]:.4f} | tq: {tq_m[k]:.4f}")
-
-print("\n✅ Plots ready for thesis (clean version)")
+if __name__ == "__main__":
+    main()
