@@ -46,6 +46,7 @@ class FQ_TurboCoreFairStrategy(IStrategy):
     ]
 
     # Thresholds on reconstructed normalized features (tq_xhat_*)
+    # Định nghĩa ngưỡng trên các đặc trưng đã tái tạo và chuẩn hóa (tq_xhat_*)
     tqx_min_trend = 0.18
     tqx_max_volatility = 0.40
     tqx_max_atr = 0.40
@@ -71,6 +72,7 @@ class FQ_TurboCoreFairStrategy(IStrategy):
         },
     }
 
+    #Hàm khởi tạo để thiết lập các biến cần thiết cho việc quản lý 
     def __init__(self, config: dict) -> None:
         super().__init__(config)
         self._tqx_features: DataFrame = pd.DataFrame()
@@ -79,6 +81,7 @@ class FQ_TurboCoreFairStrategy(IStrategy):
     def _dataset_path(self) -> Path:
         return Path(__file__).resolve().parents[1] / "freqtrade_dataset.csv"
 
+    # Hàm để tải lại các đặc trưng từ dataset nếu có sự thay đổi về thời gian sửa đổi của file dataset hoặc nếu dữ liệu hiện tại rỗng
     def _reload_tqx_features_if_needed(self) -> None:
         dataset_path = self._dataset_path()
         if not dataset_path.exists():
@@ -115,6 +118,7 @@ class FQ_TurboCoreFairStrategy(IStrategy):
         self._tqx_features = tqx_df.set_index("date")
         self._tqx_last_mtime_ns = stat.st_mtime_ns
 
+    # Hàm để hợp nhất các đặc trưng tq_xhat_* vào dataframe chính dựa trên cột "date" đã được chuyển đổi sang định dạng datetime
     def _merge_tqx_features(self, dataframe: DataFrame) -> DataFrame:
         self._reload_tqx_features_if_needed()
 

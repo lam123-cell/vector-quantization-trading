@@ -158,6 +158,7 @@ class TradingEnv(gym.Env):
 
         return obs, info
 
+    # Hàm step thực hiện một bước trong môi trường, nhận vào action và trả về observation mới, reward, terminated, truncated, và info.
     def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         """
         Execute one step of the environment.
@@ -285,44 +286,45 @@ class TradingEnv(gym.Env):
         Returns:
             float: Reward value for this step
         """
-        # 1. Price change reward from holding position
+        # 1. Phần thưởng từ việc biến động giá khi đang nắm giữ vị thế
         price_change = current_price - self.previous_price
         holding_reward = price_change * self.position
 
-        # 2. Transaction cost penalty when trading
+        # 2. Chi phí giao dịch khi thực hiện Mua/Bán
         transaction_cost_penalty = 0.0
         if traded and action in (self.BUY, self.SELL):
-            # Scale by executed notional, not raw asset price.
-            # This keeps reward magnitude stable across assets with different unit prices.
+            # Tính toán dựa trên giá trị danh nghĩa thực tế khớp lệnh, không dùng giá thô của tài sản.
+            # Điều này giúp giữ cho biên độ phần thưởng ổn định giữa các tài sản có đơn giá khác nhau.
             last_trade = self.trades[-1] if self.trades else {}
             trade_notional = float(last_trade.get("notional", 0.0))
             transaction_cost_penalty = -self.transaction_cost * trade_notional
 
-        # 2b. Penalize invalid order intents slightly.
-        # Prevents degenerate policies that keep predicting SELL while flat.
+        # 2b. Phạt nhẹ các ý định đặt lệnh không hợp lệ.
+        # Ngăn chặn các chiến lược suy biến (loại bỏ hành vi liên tục đoán SELL khi tài khoản đang trống).
         invalid_action_penalty = 0.0
         if action == self.BUY and not traded and self.position > 0.0:
             invalid_action_penalty = -0.01
         elif action == self.SELL and not traded and self.position == 0.0:
             invalid_action_penalty = -0.01
 
-        # 3. Risk penalty: Cost of holding position overnight
-        # Discourages agent from holding too long without clear reason
-        # Calibrated based on position size and implied volatility
+        # 3. Phạt rủi ro: Chi phí cho việc nắm giữ vị thế qua đêm (giữ lệnh quá lâu)
+        # Khuyến khích Agent không giữ lệnh quá lâu nếu không có lý do tăng trưởng rõ ràng
+        # Được hiệu chỉnh dựa trên quy mô vị thế và độ biến động hàm ý của thị trường
         risk_penalty = 0.0
         if self.position > 0.0:
-            # Get volatility feature if available for risk assessment
+            # Lấy chỉ báo độ biến động (nếu có) để đánh giá mức độ rủi ro thị trường
             volatility = self._get_volatility_estimate()
-            # Base risk cost + scaled by volatility, applied to position notional.
-            # Using notional avoids oversized penalty when asset unit price is high.
+            # Chi phí rủi ro cơ sở + tỉ lệ thuận với độ biến động, áp dụng lên giá trị danh nghĩa vị thế.
+            # Sử dụng giá trị danh nghĩa giúp tránh mức phạt quá lớn khi đơn giá tài sản quá cao (như Bitcoin).
             position_notional = self.position * current_price
             risk_penalty = -(0.00001 + 0.00001 * abs(volatility)) * position_notional
 
-        # 4. Combine all reward components
+         # 4. Tổng hợp tất cả các thành phần để tính Phần thưởng cuối cùng
         reward = holding_reward + transaction_cost_penalty + risk_penalty + invalid_action_penalty
 
         return float(reward)
 
+    # Hàm này cố gắng trích xuất một ước tính về độ biến động từ các cột đặc trưng nếu có, để sử dụng trong phần phạt rủi ro.   
     def _get_volatility_estimate(self) -> float:
         """
         Extract volatility estimate from features if available.
@@ -370,7 +372,7 @@ class TradingEnv(gym.Env):
             return False
 
         elif action == self.BUY:
-            # Open position using available balance (supports small accounts on high-priced assets).
+            # Mở vị thế bằng toàn bộ số dư hiện có (hỗ trợ tài khoản vốn nhỏ giao dịch các tài sản có đơn giá cao).
             if self.position == 0.0 and self.balance > 0.0:
                 qty = self.balance / (current_price * (1 + self.transaction_cost))
                 if qty > 0.0:
@@ -396,8 +398,11 @@ class TradingEnv(gym.Env):
             # Close full position if open
             if self.position > 0.0:
                 position_size = self.position
+                # Tính toán lợi nhuận thực tế dựa trên giá trị danh nghĩa của vị thế, sau khi trừ chi phí giao dịch.
                 proceeds = position_size * current_price * (1 - self.transaction_cost)
+                # Tổng số tiền mặt USDT gốc đã chi ra ở nhánh BUY trước đó (đã bao gồm phí mua).
                 buy_cost = position_size * self.entry_price * (1 + self.transaction_cost)
+                # Lợi nhuận thực tế sau khi trừ chi phí giao dịch cả mua và bán.
                 pnl = proceeds - buy_cost
                 self.balance += proceeds
                 self.position = 0.0
@@ -430,6 +435,7 @@ class TradingEnv(gym.Env):
     # METRICS & PROPERTIES
     # ========================
 
+    # Tổng giá trị tài sản (balance + giá trị vị thế) tại bước hiện tại, để đánh giá hiệu suất tổng thể của chiến lược.
     def get_total_value(self) -> float:
         """Calculate total portfolio value (balance + position value)."""
         if self.current_step < len(self.data):
@@ -437,6 +443,7 @@ class TradingEnv(gym.Env):
             return self.balance + self.position * current_price
         return self.balance
 
+    # Hàm tính toán lợi nhuận đơn giản từ số dư ban đầu, giúp đánh giá hiệu suất tổng thể của chiến lược so với việc không giao dịch.
     def get_portfolio_return(self) -> float:
         """Calculate simple return from initial balance."""
         total = self.get_total_value()
@@ -444,6 +451,7 @@ class TradingEnv(gym.Env):
             return (total - self.initial_balance) / self.initial_balance
         return 0.0
 
+    # Hàm này tổng hợp các chỉ số hiệu suất chính như tổng giá trị tài sản, lợi nhuận, số lượng giao dịch thắng/thua, tỷ lệ thắng, và lợi nhuận trung bình trên mỗi giao dịch thắng để cung cấp cái nhìn tổng quan về hiệu suất của chiến lược.
     def get_metrics(self) -> dict[str, float]:
         """Return summary metrics for evaluation."""
         total_value = self.get_total_value()

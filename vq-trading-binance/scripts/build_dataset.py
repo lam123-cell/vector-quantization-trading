@@ -24,10 +24,12 @@ DATASET_SPECS: tuple[DatasetSpec, ...] = (
 )
 
 
+#Hàm giúp xác định thư mục gốc của repo, để từ đó có thể tìm đến file dataset_master.csv một cách linh hoạt, bất kể script được chạy từ đâu. Nó sử dụng pathlib để làm việc với đường dẫn và đảm bảo rằng nó luôn trỏ đến đúng vị trí của dataset_master.csv.
 def _resolve_repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+# Hàm tìm kiếm và xác định tên cột thời gian trong dataser_master.csv 
 def _resolve_time_column(columns: list[str]) -> str:
     for candidate in ("time", "timestamp", "date"):
         if candidate in columns:
@@ -35,6 +37,7 @@ def _resolve_time_column(columns: list[str]) -> str:
     raise ValueError("dataset_master.csv must contain one of: time, timestamp, date")
 
 
+# Hàm này sẽ lọc và sắp xếp các cột trong dataset_master.csv dựa trên tiền tố được chỉ định 
 def _collect_feature_columns(columns: list[str], prefix: str) -> list[str]:
     return sorted([column for column in columns if column.startswith(prefix)])
 
@@ -55,6 +58,7 @@ def _select_output_columns(columns: list[str], prefix: str) -> list[str]:
     return [time_column] + ohlcv_columns + feature_columns + meta_cols
 
 
+# Hàm này sẽ đọc dataset_master.csv, chuyển đổi cột thời gian sang định dạng datetime, và đảm bảo rằng tất cả các cột số đều được chuyển đổi thành kiểu số. Nó cũng sẽ loại bỏ các hàng có giá trị thiếu hoặc không hợp lệ, sắp xếp dữ liệu theo thời gian, và chuẩn hóa định dạng thời gian để phù hợp với yêu cầu của DRL.
 def _load_and_clean_dataset(dataset_master: Path, output_columns: list[str]) -> pd.DataFrame:
     dataframe = pd.read_csv(dataset_master, usecols=output_columns)
 
@@ -77,6 +81,7 @@ def _load_and_clean_dataset(dataset_master: Path, output_columns: list[str]) -> 
     return dataframe
 
 
+# Hàm chia dữ liệu thành 2 tập train và test theo thứ tự thời gian
 def _chronological_split(dataframe: pd.DataFrame, train_ratio: float) -> tuple[pd.DataFrame, pd.DataFrame]:
     if not 0.0 < train_ratio < 1.0:
         raise ValueError("train_ratio must be between 0 and 1")
@@ -148,6 +153,7 @@ def build_all_datasets(
     return results
 
 
+# Hàm này sẽ xử lý các đối số dòng lệnh 
 def parse_args() -> argparse.Namespace:
     repo_root = _resolve_repo_root()
     parser = argparse.ArgumentParser(description="Build DRL baseline/turbo datasets from dataset_master.csv")

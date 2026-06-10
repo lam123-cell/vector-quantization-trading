@@ -36,31 +36,31 @@ def parse_args() -> argparse.Namespace:
         "--model",
         type=Path,
         required=True,
-        help="Path to trained PPO model (.zip)",
+        help="Đường dẫn đến tệp mô hình đã được huấn luyện (ví dụ: models/ppo_baseline.zip)",
     )
     parser.add_argument(
         "--feature-set",
         type=str,
         choices=["baseline", "turbo"],
         required=True,
-        help="Feature set to evaluate",
+        help="Tập đặc trưng để đánh giá",
     )
     parser.add_argument(
         "--dataset",
         type=Path,
-        help="Path to test dataset (auto-detected if not provided)",
+        help="Đường dẫn đến tập dữ liệu kiểm tra (tự động phát hiện nếu không được cung cấp)",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=repo_root / "experiments" / "runs",
-        help="Directory to store evaluation outputs",
+        help="Thư mục đầu ra để lưu kết quả đánh giá (mặc định: experiments/runs/)",
     )
     parser.add_argument(
         "--tag",
         type=str,
         default="",
-        help="Optional tag appended to output filenames",
+        help="Thẻ gắn thêm tùy chọn vào tên tệp kết quả để phân biệt các lượt chạy (ví dụ: --tag run1)",
     )
     return parser.parse_args()
 
@@ -90,33 +90,47 @@ def create_environment(dataset_path: Path, feature_set: FeatureSet) -> TradingEn
 
 
 def compute_max_drawdown(equity_curve: list[float]) -> float:
+    """
+    Tính toán Mức sụt giảm tài sản lớn nhất (Max Drawdown) từ đường cong tăng trưởng tài sản.
+    Chỉ số này thể hiện rủi ro lớn nhất mà tài khoản phải đối mặt trong suốt đợt backtest.
+    """
+    # Nếu danh sách tài sản trống, trả về 0.0 để tránh lỗi hệ thống
     if not equity_curve:
         return 0.0
 
-    peak = equity_curve[0]
-    max_dd = 0.0
+    peak = equity_curve[0]# Khởi tạo đỉnh tài sản ban đầu
+    max_dd = 0.0 # Khởi tạo mức sụt giảm lớn nhất ban đầu
     for value in equity_curve:
         peak = max(peak, value)
         if peak > 0:
             dd = (peak - value) / peak
             max_dd = max(max_dd, dd)
-    return float(max_dd)
+    return float(max_dd)# Trả về kết quả dưới dạng số thực float (Ví dụ: 0.15 tương đương sụt giảm 15%)
 
 
 def compute_sharpe(returns: np.ndarray, eps: float = 1e-12) -> float:
+    """
+    Tính toán Chỉ số Sharpe (Sharpe Ratio) trên từng bước thời gian phục vụ đánh giá hiệu năng.
+    Chỉ số này phản ánh mức lợi nhuận thu về được trên một đơn vị rủi ro chấp nhận.
+    """
+    # Nếu mảng tỷ suất sinh lời rỗng, trả về 0.0 để tránh lỗi
     if returns.size == 0:
         return 0.0
 
-    mean_ret = float(np.mean(returns))
-    std_ret = float(np.std(returns))
+    mean_ret = float(np.mean(returns))# Lợi nhuận trung bình trên từng bước thời gian
+    std_ret = float(np.std(returns))# Độ lệch chuẩn (Độ biến động/Rủi ro) của tài sản
     if std_ret < eps:
         return 0.0
 
-    # Per-step Sharpe without annualization, suitable for relative comparison.
+    # Tính chỉ số Sharpe từng bước, phù hợp để so sánh tương đối giữa các mô hình.
     return mean_ret / std_ret
 
 
 def evaluate_model(model: PPO, env: TradingEnv) -> tuple[dict[str, float], pd.DataFrame, pd.DataFrame]:
+    """
+    Thực hiện quá trình đánh giá (Backtest) mô hình PPO trên tập dữ liệu kiểm thử.
+    """
+    # Khởi động lại môi trường với seed cố định để đảm bảo tính nhất quán của dữ liệu test
     obs, _ = env.reset(seed=42)
 
     done = False
@@ -127,7 +141,9 @@ def evaluate_model(model: PPO, env: TradingEnv) -> tuple[dict[str, float], pd.Da
     action_name = {0: "HOLD", 1: "BUY", 2: "SELL"}
     rollout_rows: list[dict[str, float | int | str | bool]] = []
 
+     # Tiến hành vòng lặp tịnh tiến luồng dữ liệu streaming cho đến khi hết tệp dữ liệu
     while not done:
+         # Ghi nhận trạng thái tài khoản TRƯỚC khi Agent đưa ra hành động tại bước thời gian hiện tại, bao gồm: thời gian, giá đóng cửa, số dư tài khoản, vị thế nắm giữ. 
         step_before = int(env.current_step)
         row_before = env.data.iloc[step_before]
         time_before = str(row_before.get("time", ""))
@@ -135,17 +151,21 @@ def evaluate_model(model: PPO, env: TradingEnv) -> tuple[dict[str, float], pd.Da
         balance_before = float(env.balance)
         position_before = float(env.position)
 
+        # Bộ não AI dự đoán hành động tối ưu (Bật chế độ deterministic=True để loại bỏ tính ngẫu nhiên)
         action, _ = model.predict(obs, deterministic=True)
         action_int = int(action)
         action_counts[action_int] = action_counts.get(action_int, 0) + 1
+        # Môi trường thực thi hành động, tịnh tiến thời gian và trả về kết quả của bước thời gian mới, bao gồm: trạng thái quan sát mới, phần thưởng nhận được, cờ kết thúc (terminated) và cờ cắt ngắn (truncated).
         obs, reward, terminated, truncated, _ = env.step(action_int)
 
+        # Ghi nhận trạng thái tài khoản SAU khi thực thi hành động, bao gồm: phần thưởng nhận được, giá trị tài sản ròng (equity), mức sụt giảm tài sản (drawdown) và thông tin về việc kết thúc tập dữ liệu.
         rewards.append(float(reward))
         equity_after = float(env.get_total_value())
         equity_curve.append(equity_after)
         peak_equity = max(peak_equity, equity_after)
         drawdown = (peak_equity - equity_after) / peak_equity if peak_equity > 0 else 0.0
 
+        # Lưu lịch sử chi tiết từng bước
         rollout_rows.append(
             {
                 "step": step_before,
@@ -167,10 +187,12 @@ def evaluate_model(model: PPO, env: TradingEnv) -> tuple[dict[str, float], pd.Da
 
         done = bool(terminated or truncated)
 
+    # Trích xuất các chỉ số thống kê từ môi trường và tính toán tỷ suất sinh lời từng bước
     env_metrics = env.get_metrics()
     equity = np.asarray(equity_curve, dtype=np.float64)
     step_returns = np.diff(equity) / np.maximum(equity[:-1], 1e-12)
 
+    # Tổng hợp các chỉ số kinh tế tổng quan
     total_reward = float(np.sum(rewards))
     final_value = float(env.get_total_value())
     profit = final_value - float(env.initial_balance)
@@ -200,12 +222,14 @@ def evaluate_model(model: PPO, env: TradingEnv) -> tuple[dict[str, float], pd.Da
         "action_sell_ratio": (sell_count / total_steps) if total_steps > 0 else 0.0,
     }
 
+     # Chuyển đổi dữ liệu sang dạng bảng DataFrame sạch sẽ để chuẩn bị xuất thành các file CSV báo cáo
     rollout_df = pd.DataFrame(rollout_rows)
     trades_df = pd.DataFrame(env.trades)
 
     return metrics, rollout_df, trades_df
 
 
+# Hàm phụ trợ để lưu trữ kết quả đánh giá, bao gồm: các chỉ số kinh tế tổng quan (metrics), lịch sử chi tiết từng bước (rollout_df) và lịch sử giao dịch (trades_df) vào thư mục đầu ra được chỉ định. Kết quả được lưu dưới dạng JSON và CSV để dễ dàng truy xuất và phân tích sau này.
 def save_outputs(
     metrics: dict[str, float],
     rollout_df: pd.DataFrame,
@@ -278,23 +302,27 @@ def main() -> int:
     print("=" * 80)
     print("STEP 8 - EVALUATE DRL AGENT")
     print("=" * 80)
-
+    # 1. Kiểm tra sự tồn tại của mô hình AI đã huấn luyện
     try:
         model_path = args.model
         if not model_path.exists():
             raise FileNotFoundError(f"Model not found: {model_path}")
 
+        # 2. Định vị tệp dữ liệu kiểm thử tương ứng (Tập Test)
         dataset_path = resolve_dataset_path(args.feature_set, args.dataset)
 
         print(f"[*] Model: {model_path}")
         print(f"[*] Feature set: {args.feature_set}")
         print(f"[*] Dataset: {dataset_path}")
 
+        # 3. Tái dựng sàn giao dịch giả lập và nạp bộ não AI PPO
         env = create_environment(dataset_path, args.feature_set)
         model = PPO.load(str(model_path), env=env)
 
+        # 4. Kích hoạt tiến trình giao dịch giả lập ròng trên luồng dữ liệu tương lai
         metrics, rollout_df, trades_df = evaluate_model(model, env)
 
+        # 5. Lưu trữ toàn bộ kết quả thu hoạch báo cáo xuống ổ đĩa
         json_path, csv_path, rollout_path, trades_path = save_outputs(
             metrics=metrics,
             rollout_df=rollout_df,

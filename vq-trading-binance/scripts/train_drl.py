@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from models.drl_env import TradingEnv
 
-
+# Hàm đóng vai trò làm 'Bảng điều khiển siêu tham số'
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     repo_root = Path(__file__).resolve().parents[1]
@@ -49,53 +49,54 @@ def parse_args() -> argparse.Namespace:
         type=str,
         choices=["baseline", "turbo"],
         default="baseline",
-        help="Feature set to use (baseline=n_*, turbo=tq_xhat_*)",
+        help="Tập đặc trưng sử dụng (baseline=n_*, turbo=tq_xhat_*)",
     )
     parser.add_argument(
         "--dataset",
         type=Path,
-        help="Path to training dataset (auto-detected if not specified)",
+        help="Đường dẫn đến tệp dữ liệu huấn luyện (tự động nhận diện nếu không chỉ định)",
     )
     parser.add_argument(
         "--timesteps",
         type=int,
         default=100000,
-        help="Total timesteps for training",
+        help="Tổng số bước thời gian (timesteps) để huấn luyện",
     )
     parser.add_argument(
         "--learning-rate",
         type=float,
         default=3e-4,
-        help="PPO learning rate",
+        help="Tốc độ học (Learning rate) của thuật toán PPO",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
         default=64,
-        help="Batch size for PPO",
+        help="Kích thước lô dữ liệu (Batch size) cho PPO",
     )
     parser.add_argument(
         "--n-steps",
         type=int,
         default=2048,
-        help="Number of steps before updating policy",
+        help="Số bước trải nghiệm tích lũy trước khi cập nhật chính sách (n-steps) trong PPO",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=repo_root / "models" / "ppo_baseline",
-        help="Output directory for model checkpoint",
+        help="Thư mục đầu ra để lưu trữ các điểm kiểm soát mô hình (model checkpoint) và logs huấn luyện (mặc định: models/ppo_baseline)",
     )
     parser.add_argument(
         "--verbose",
         type=int,
         default=1,
-        help="Verbosity level (0=quiet, 1=info, 2=debug)",
+        help="Mức độ hiển thị thông tin log (0=tắt, 1=thông tin chung, 2=gỡ lỗi chi tiết)",
     )
     
     return parser.parse_args()
 
 
+# Hàm này đóng vai trò làm 'Bộ giải quyết đường dẫn dữ liệu' - tự động xác định vị trí tệp dữ liệu dựa trên tập đặc trưng đã chọn hoặc đường dẫn do người dùng cung cấp
 def resolve_dataset_path(feature_set: Literal["baseline", "turbo"], explicit: Path | None) -> Path:
     """Resolve training dataset path."""
     if explicit:
@@ -119,6 +120,7 @@ def resolve_dataset_path(feature_set: Literal["baseline", "turbo"], explicit: Pa
     return dataset_path
 
 
+# Hàm này đóng vai trò làm 'Bộ tạo môi trường' - tạo môi trường giao dịch DRL từ tệp dữ liệu đã tải, tự động phát hiện các cột đặc trưng và cấu hình môi trường một cách linh hoạt
 def create_environment(dataset_path: Path) -> TradingEnv:
     """Create trading environment from dataset."""
     print(f"[*] Loading dataset: {dataset_path.name}")
@@ -173,7 +175,7 @@ def train_ppo(
         tensorboard_log=str(output_dir / "logs"),
     )
     
-    # Callback to save model periodically
+    # Callback tự động lưu lại trọng số mô hình theo chu kỳ đề phòng sự cố phần cứng
     checkpoint_callback = CheckpointCallback(
         save_freq=max(10000, timesteps // 10),
         save_path=str(output_dir / "checkpoints"),
@@ -181,23 +183,23 @@ def train_ppo(
         save_replay_buffer=False,
     )
 
-    # Metrics callback to record memory usage and rewards for policy stability
+     # Callback tùy chỉnh nhằm đo đạc tài nguyên hệ thống (RAM) và phần thưởng phục vụ bài toán đối chứng
     class MetricsCallback(BaseCallback):
         def __init__(self, verbose=0):
             super().__init__(verbose)
-            self.memory_usage: list[float] = []
+            self.memory_usage: list[float] = [] # Danh sách lưu dung lượng RAM tiêu thụ (GB)
             self.rewards: list[float] = []
 
         def _on_step(self) -> bool:
-            # sample memory every 100 calls
+             # Thu thập mẫu dung lượng bộ nhớ RAM sau mỗi 100 bước tương tác với luồng streaming
             try:
                 if self.n_calls % 100 == 0:
-                    mem_gb = psutil.virtual_memory().used / (1024 ** 3)
+                    mem_gb = psutil.virtual_memory().used / (1024 ** 3)# Quy đổi từ Bytes sang Gigabytes
                     self.memory_usage.append(mem_gb)
             except Exception:
                 pass
 
-            # record reward if present in locals
+            # Trích xuất và ghi nhận giá trị phần thưởng từ biến nội bộ của Agent để đánh giá độ ổn định 
             try:
                 local_rewards = self.locals.get("rewards") or self.locals.get("reward")
                 if local_rewards:

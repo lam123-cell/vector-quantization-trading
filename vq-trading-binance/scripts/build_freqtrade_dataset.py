@@ -13,12 +13,13 @@ import shutil
 from pathlib import Path
 
 
+# Làm sạch và chuẩn hóa cột thời gian, hỗ trợ cả định dạng datetime và timestamp (ms)
 def _normalize_time_series(series: pd.Series) -> pd.Series:
     ts = pd.to_datetime(series, errors="coerce")
     ts_num = pd.to_datetime(pd.to_numeric(series, errors="coerce"), unit="ms", errors="coerce")
     return ts.fillna(ts_num)
 
-
+# Hàm phân loại và chọn cột từ dataset_master.csv dựa trên tiền tố và tên cột
 def _resolve_dataset_columns(columns: list[str]) -> list[str]:
     n_cols = sorted([c for c in columns if c.startswith("n_")])
     tq_xhat_cols = sorted([c for c in columns if c.startswith("tq_xhat_")])
@@ -77,7 +78,7 @@ def build_freqtrade_dataset(
     print(f"    - Dataset: {len(df_dataset):,} rows x {len(df_dataset.columns)} cols")
     print(f"    - Raw OHLCV: {len(df_raw):,} rows x {len(df_raw.columns)} cols")
     
-    # 2. Prepare merge - robust timestamp normalization
+    # 2. Prepare merge - timestamp normalization
     print("\n[2] Prepare merge...")
     df_dataset["_time_key"] = _normalize_time_series(df_dataset["time"])
     df_raw["_time_key"] = _normalize_time_series(df_raw[raw_time_col])
@@ -189,7 +190,7 @@ if __name__ == '__main__':
             output_file=str(root_dir / 'freqtrade_dataset.csv'),
             copy_to_user_data=True,
         )
-        print("\nSuccess! You can now use freqtrade_dataset.csv with Freqtrade")
+        print("\nSuccess!")
         sys.exit(0)
         
     except Exception as e:

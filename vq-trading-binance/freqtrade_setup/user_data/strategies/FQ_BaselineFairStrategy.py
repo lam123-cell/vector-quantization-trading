@@ -76,6 +76,7 @@ class FQ_BaselineFairStrategy(IStrategy):
     def _dataset_path(self) -> Path:
         return Path(__file__).resolve().parents[1] / "freqtrade_dataset.csv"
 
+    # Tải lại các đặc trưng đã chuẩn hóa nếu dataset đã được cập nhật
     def _reload_n_features_if_needed(self) -> None:
         dataset_path = self._dataset_path()
         if not dataset_path.exists():
@@ -112,6 +113,7 @@ class FQ_BaselineFairStrategy(IStrategy):
         self._n_features = n_df.set_index("date")
         self._n_last_mtime_ns = stat.st_mtime_ns
 
+    # Kết hợp các đặc trưng đã chuẩn hóa vào dataframe chính, đảm bảo căn chỉnh theo thời gian
     def _merge_n_features(self, dataframe: DataFrame) -> DataFrame:
         self._reload_n_features_if_needed()
 
@@ -132,7 +134,7 @@ class FQ_BaselineFairStrategy(IStrategy):
 
         if self._n_features.empty:
             for col in n_cols:
-                dataframe[col] = 0.0
+                dataframe[col] = 0.0 #không bị crash hệ thống nếu dataset chưa sẵn sàng
             return dataframe
 
         n_aligned = self._n_features.reindex(pd.DatetimeIndex(dataframe["date"]))
@@ -142,6 +144,7 @@ class FQ_BaselineFairStrategy(IStrategy):
 
         return dataframe
 
+    # Tính toán các chỉ báo kỹ thuật và đặc trưng đã chuẩn hóa, đảm bảo xử lý các giá trị vô hạn và NaN
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe = dataframe.copy()
 
