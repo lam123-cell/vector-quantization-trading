@@ -11,23 +11,26 @@ class TurboQuant:
     - LSTM (sequence modeling)
     """
 
+    # Hàm khởi tạo với các tham số mặc định
     def __init__(self, feature_dim=9, levels=16, value_range=(-3, 3), seed=42):
         self.feature_dim = feature_dim
-        self.levels = levels
+        self.levels = levels # Số mức lượng tử hóa cho mỗi chiều (16 mức)
         self.low, self.high = value_range
         self.rng = np.random.default_rng(seed)
 
-        # Scalar quantization codebook
+        # Tạo bảng mã vô hướng: Chia dải [-3, 3] thành 16 mốc giá trị đều nhau
         self.scalar_codebook = np.linspace(self.low, self.high, self.levels)
 
-        # Random orthonormal rotation
+        # Tạo ma trận xoay trực giao ngẫu nhiên để phân tán năng lượng dữ liệu
         self.rotation_matrix = self._build_rotation()
 
     # =========================
     # ROTATION
     # =========================
     def _build_rotation(self):
+         # Bước 1: Khởi tạo ma trận ngẫu nhiên kích thước 9x9 theo phân phối chuẩn
         A = self.rng.normal(size=(self.feature_dim, self.feature_dim))
+         # Bước 2: Phân rã QR để ép ma trận A thành ma trận trực giao Q (Xoay không làm méo khoảng cách)
         Q, R = np.linalg.qr(A)
 
         diag = np.sign(np.diag(R))

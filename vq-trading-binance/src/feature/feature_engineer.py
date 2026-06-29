@@ -76,9 +76,9 @@ class FeatureEngineer:
             last_row = df[
                 [
                     'log_return',
-                    'return_5',        # 🔥 NEW
+                    'return_5',        
                     'log_volume',
-                    'candle_body',     # 🔥 NEW
+                    'candle_body',     
                     'rsi',
                     'macd',
                     'macd_signal',

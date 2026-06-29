@@ -81,6 +81,7 @@ def resolve_dataset_path(dataset_master: Path) -> Path:
     return dataset_master
 
 
+# Load dataset_master.csv, ensuring required columns are present 
 def load_dataset(dataset_master: Path) -> pd.DataFrame:
     required_columns = ["time", *ORIGINAL_COLUMNS, *RECON_COLUMNS]
     dataframe = pd.read_csv(dataset_master, usecols=lambda column: column in required_columns)
